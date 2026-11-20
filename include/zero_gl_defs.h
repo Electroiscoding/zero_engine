@@ -30,6 +30,9 @@ typedef ptrdiff_t GLintptr;
 
 #define GL_TRIANGLES 0x0004
 #define GL_DEPTH_TEST 0x0B71
+#define GL_BLEND 0x0BE2
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_COLOR_BUFFER_BIT 0x00004000
 #define GL_DEPTH_BUFFER_BIT 0x00000100
 #define GL_UNSIGNED_BYTE 0x1401
@@ -108,6 +111,7 @@ extern void glClear(GLbitfield mask);
 extern void glClearColor(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
 extern void glEnable(GLenum cap);
 extern void glDisable(GLenum cap);
+extern void glBlendFunc(GLenum sfactor, GLenum dfactor);
 extern void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern void glDrawArrays(GLenum mode, GLint first, GLsizei count);
 extern void glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid *indices);
