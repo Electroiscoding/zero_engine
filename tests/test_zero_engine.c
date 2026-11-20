@@ -6,10 +6,14 @@
 #include "zero_shader.h"
 #include "zero_mesh.h"
 #include "zero_camera.h"
+#include "zero_image.h"
+#include "zero_obj.h"
+#include "zero_zmesh.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
 
 static int g_tests_run = 0;
 static int g_tests_passed = 0;
@@ -168,6 +172,108 @@ static void test_shader_definitions(void) {
     TEST_ASSERT(strstr(fs, "u_light_dir") != NULL, "Fragment shader must contain u_light_dir");
 }
 
+static void test_obj_parser(void) {
+    ZeroArena arena = zero_arena_create(2 * 1024 * 1024);
+
+    const char *obj_text =
+        "# Simple OBJ Test\n"
+        "v -1.0 -1.0 0.0\n"
+        "v  1.0 -1.0 0.0\n"
+        "v  1.0  1.0 0.0\n"
+        "v -1.0  1.0 0.0\n"
+        "vt 0.0 0.0\n"
+        "vt 1.0 0.0\n"
+        "vt 1.0 1.0\n"
+        "vt 0.0 1.0\n"
+        "vn 0.0 0.0 1.0\n"
+        "# Quad face with v/vt/vn format\n"
+        "f 1/1/1 2/2/1 3/3/1 4/4/1\n"
+        "# Negative index triangle\n"
+        "f -4/-4/-1 -3/-3/-1 -2/-2/-1\n";
+
+    ZeroMeshData mesh = zero_obj_parse_memory(obj_text, strlen(obj_text), &arena);
+    TEST_ASSERT(mesh.vertex_count == 9, "Quad fan (6) + Tri (3) = 9 vertices");
+    TEST_ASSERT(mesh.index_count == 9, "9 indices produced");
+    TEST_ASSERT(mesh.vertices[0].pos.x == -1.0f && mesh.vertices[0].pos.y == -1.0f, "First vertex pos");
+    TEST_ASSERT(mesh.vertices[0].normal.z == 1.0f, "First vertex normal");
+    TEST_ASSERT(mesh.vertices[2].uv.x == 1.0f && mesh.vertices[2].uv.y == 1.0f, "UV coordinate check");
+
+    zero_arena_destroy(&arena);
+}
+
+static void test_image_loaders(void) {
+    ZeroArena arena = zero_arena_create(1024 * 1024);
+
+    uint8_t tga_data[18 + 2 * 2 * 3] = {0};
+    tga_data[2] = 2; // uncompressed TrueColor
+    tga_data[12] = 2; tga_data[13] = 0; // width = 2
+    tga_data[14] = 2; tga_data[15] = 0; // height = 2
+    tga_data[16] = 24; // 24-bit
+    tga_data[17] = 0x20; // top-down
+
+    // 4 pixels in BGR: Red (0,0,255), Green (0,255,0), Blue (255,0,0), White (255,255,255)
+    uint8_t *px = tga_data + 18;
+    px[0] = 0;   px[1] = 0;   px[2] = 255;
+    px[3] = 0;   px[4] = 255; px[5] = 0;
+    px[6] = 255; px[7] = 0;   px[8] = 0;
+    px[9] = 255; px[10]= 255; px[11]= 255;
+
+    ZeroImage tga_img = zero_image_load_tga_memory(tga_data, sizeof(tga_data), &arena);
+    TEST_ASSERT(tga_img.is_valid, "TGA must decode validly");
+    TEST_ASSERT(tga_img.width == 2 && tga_img.height == 2, "TGA dimensions");
+    TEST_ASSERT(tga_img.pixels[0] == 255 && tga_img.pixels[1] == 0 && tga_img.pixels[2] == 0, "TGA BGR swizzled to Red");
+
+    // Synthetic BMP (2x2 24-bit, row stride padded to 8 bytes)
+    uint8_t bmp_data[54 + 8 * 2] = {0};
+    bmp_data[0] = 'B'; bmp_data[1] = 'M';
+    bmp_data[10] = 54; // offset
+    bmp_data[14] = 40; // DIB size
+    bmp_data[18] = 2;  // width
+    bmp_data[22] = 2;  // height (bottom-up)
+    bmp_data[26] = 1;  // planes
+    bmp_data[28] = 24; // bpp
+
+    uint8_t *bmp_px = bmp_data + 54;
+    // Row 0 (bottom row)
+    bmp_px[0] = 255; bmp_px[1] = 0; bmp_px[2] = 0; // Blue in BGR -> should be Blue
+    // Row 1 (top row, offset 8 due to 4-byte padding)
+    bmp_px[8] = 0; bmp_px[9] = 0; bmp_px[10] = 255; // Red in BGR -> should be Red
+
+    ZeroImage bmp_img = zero_image_load_bmp_memory(bmp_data, sizeof(bmp_data), &arena);
+    TEST_ASSERT(bmp_img.is_valid, "BMP must decode validly");
+    TEST_ASSERT(bmp_img.width == 2 && bmp_img.height == 2, "BMP dimensions");
+    // Row 0 of decoded image is top row
+    TEST_ASSERT(bmp_img.pixels[0] == 255 && bmp_img.pixels[1] == 0 && bmp_img.pixels[2] == 0, "BMP top row Red");
+
+    zero_arena_destroy(&arena);
+}
+
+static void test_zmesh_binary_mmap(void) {
+    ZeroArena arena = zero_arena_create(2 * 1024 * 1024);
+
+    ZeroMeshData cube = zero_mesh_gen_cube(&arena, 3.0f);
+    const char *tmp_path = "/tmp/test_cube.zmesh";
+
+    bool saved = zero_zmesh_save_file(tmp_path, &cube);
+    TEST_ASSERT(saved == true, ".zmesh file save");
+
+    ZeroMeshData loaded = zero_zmesh_load_file(tmp_path, &arena);
+    TEST_ASSERT(loaded.vertex_count == cube.vertex_count, ".zmesh loaded vertex count match");
+    TEST_ASSERT(loaded.index_count == cube.index_count, ".zmesh loaded index count match");
+    TEST_ASSERT(loaded.vertices[0].pos.x == cube.vertices[0].pos.x, ".zmesh vertex position fidelity");
+
+    ZeroZmeshMap map = zero_zmesh_mmap_open(tmp_path);
+    TEST_ASSERT(map.is_valid == true, ".zmesh mmap open");
+    TEST_ASSERT(map.header->magic == ZERO_ZMESH_MAGIC, ".zmesh magic header match");
+    TEST_ASSERT(map.header->vertex_count == cube.vertex_count, ".zmesh mapped vertex count match");
+    TEST_ASSERT(map.header->sphere_radius > 1.5f, ".zmesh bounding sphere radius check");
+    TEST_ASSERT(map.vertices[0].pos.y == cube.vertices[0].pos.y, ".zmesh mmap vertex position fidelity");
+
+    zero_zmesh_mmap_close(&map);
+    unlink(tmp_path);
+    zero_arena_destroy(&arena);
+}
+
 static void test_platform_headless(void) {
     ZeroPlatformConfig cfg = {
         .title = "Zero Engine Test",
@@ -196,19 +302,22 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("=== ZERO ENGINE: PHASE 1 & PHASE 2 VERIFICATION SUITE ===\n");
+    printf("=== ZERO ENGINE: PHASE 1, 2, 3 VERIFICATION SUITE ===\n");
     test_memory_arena();
     test_math_vectors_matrices();
     test_math_dual_quaternions();
     test_procedural_meshes();
     test_camera_system();
     test_shader_definitions();
+    test_obj_parser();
+    test_image_loaders();
+    test_zmesh_binary_mmap();
     test_platform_headless();
 
     if (run_windowed) {
         printf("Running windowed platform verification...\n");
         ZeroPlatformConfig cfg = {
-            .title = "Zero Engine Phase 2 Test",
+            .title = "Zero Engine Windowed Test",
             .width = 640,
             .height = 480,
             .headless = false
