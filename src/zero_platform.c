@@ -139,6 +139,9 @@ void zero_platform_poll_events(ZeroPlatformState *platform) {
                 KeySym ksym = XLookupKeysym(&ev.xkey, 0);
                 if (ksym < 256) {
                     platform->keys[ksym] = true;
+                } else if (ksym >= 0xFF50 && ksym <= 0xFF57) {
+                    // Map XK_Home..XK_Down (XK_Left=0xFF51, XK_Up=0xFF52, XK_Right=0xFF53, XK_Down=0xFF54) to 256 + offset
+                    platform->keys[256 + (ksym - 0xFF50)] = true;
                 }
                 if (ksym == XK_Escape) {
                     platform->should_close = true;
@@ -149,6 +152,8 @@ void zero_platform_poll_events(ZeroPlatformState *platform) {
                 KeySym ksym = XLookupKeysym(&ev.xkey, 0);
                 if (ksym < 256) {
                     platform->keys[ksym] = false;
+                } else if (ksym >= 0xFF50 && ksym <= 0xFF57) {
+                    platform->keys[256 + (ksym - 0xFF50)] = false;
                 }
                 break;
             }

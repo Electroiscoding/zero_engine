@@ -14,9 +14,9 @@ ZeroVehicle zero_vehicle_create(Vec3 spawn_pos) {
     car.inertia = vec3(1800.0f, 2400.0f, 750.0f);
     car.inv_inertia = vec3(1.0f / 1800.0f, 1.0f / 2400.0f, 1.0f / 750.0f);
 
-    float half_width = 0.85f;
-    float front_z = 1.35f;
-    float rear_z = -1.25f;
+    float half_width = 0.78f;
+    float front_z = 1.45f;
+    float rear_z = -1.45f;
 
     // Wheel 0: Front-Left
     car.wheels[0].hardpoint = vec3(-half_width, 0.0f, front_z);
@@ -133,16 +133,19 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
 
                 // Longitudinal drive & brake
                 float drive_f = 0.0f;
-                if (w->is_drive) {
-                    drive_f = car->throttle_input * 3600.0f;
-                }
                 float brake_f = 0.0f;
+                if (w->is_drive) {
+                    drive_f = car->throttle_input * 4500.0f;
+                }
                 if (car->brake_input > 0.01f) {
-                    float sgn = (v_long > 0.1f) ? -1.0f : ((v_long < -0.1f) ? 1.0f : 0.0f);
-                    brake_f = sgn * car->brake_input * 4500.0f;
+                    if (v_long > 0.5f) {
+                        brake_f = -car->brake_input * 5500.0f;
+                    } else if (w->is_drive) {
+                        drive_f = -car->brake_input * 3000.0f; // Reverse gear acceleration
+                    }
                 }
                 if (car->handbrake && !w->is_front) {
-                    brake_f -= (v_long > 0.1f ? 1.0f : 0.0f) * 6000.0f;
+                    brake_f -= (v_long > 0.1f ? 1.0f : (v_long < -0.1f ? -1.0f : 0.0f)) * 7000.0f;
                 }
 
                 Vec3 f_wheel = vec3_add(

@@ -17,7 +17,7 @@ typedef struct ZeroPlatformState {
     GLXContext gl_context;
     Atom wm_delete_window;
     
-    bool keys[256];
+    bool keys[512];
     int mouse_x;
     int mouse_y;
     bool mouse_buttons[8];
