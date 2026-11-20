@@ -122,13 +122,13 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
                 float v_lat = vec3_dot(point_vel, wheel_right);
                 float v_long = vec3_dot(point_vel, wheel_fwd);
 
-                // Lateral friction & drift with responsive cornering
-                float cornering_stiff = w->is_front ? 34000.0f : 30000.0f;
+                // Lateral friction with high-grip tarmac tires (eliminates icy sliding)
+                float cornering_stiff = w->is_front ? 52000.0f : 48000.0f;
                 if (car->handbrake && !w->is_front) {
-                    cornering_stiff = 4200.0f; // Induces power slides
+                    cornering_stiff = 5500.0f; // Induces controlled power slides only with handbrake
                 }
                 float lat_force_mag = -v_lat * cornering_stiff;
-                float max_lat = normal_f * 1.35f;
+                float max_lat = normal_f * 2.45f;
                 if (lat_force_mag > max_lat) lat_force_mag = max_lat;
                 if (lat_force_mag < -max_lat) lat_force_mag = -max_lat;
 
@@ -136,17 +136,17 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
                 float drive_f = 0.0f;
                 float brake_f = 0.0f;
                 if (w->is_drive) {
-                    drive_f = car->throttle_input * 4500.0f;
+                    drive_f = car->throttle_input * 4200.0f;
                 }
                 if (car->brake_input > 0.01f) {
                     if (v_long > 0.5f) {
-                        brake_f = -car->brake_input * 5500.0f;
+                        brake_f = -car->brake_input * 6000.0f;
                     } else if (w->is_drive) {
                         drive_f = -car->brake_input * 3000.0f; // Reverse gear acceleration
                     }
                 }
                 if (car->handbrake && !w->is_front) {
-                    brake_f -= (v_long > 0.1f ? 1.0f : (v_long < -0.1f ? -1.0f : 0.0f)) * 7000.0f;
+                    brake_f -= (v_long > 0.1f ? 1.0f : (v_long < -0.1f ? -1.0f : 0.0f)) * 8000.0f;
                 }
 
                 Vec3 f_wheel = vec3_add(
@@ -162,25 +162,51 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
             }
         }
 
-        // Aerodynamic drag & downforce
+        // Aerodynamic drag & downforce (increased downforce glues car to road at speed)
         float speed = vec3_length(car->velocity);
         Vec3 drag = vec3_scale(car->velocity, -0.5f * 1.225f * 0.32f * 2.2f * speed);
         total_force = vec3_add(total_force, drag);
 
-        Vec3 downforce = vec3_scale(up, -0.5f * 1.225f * 0.85f * speed * speed);
+        Vec3 downforce = vec3_scale(up, -0.5f * 1.225f * 2.20f * speed * speed);
         total_force = vec3_add(total_force, downforce);
 
-        // Angular damping
-        total_torque = vec3_sub(total_torque, vec3_scale(car->angular_velocity, 180.0f));
+        // Angular yaw damping (stabilizes heading so it doesn't spin uncontrollably like ice)
+        total_torque = vec3_sub(total_torque, vec3_scale(car->angular_velocity, 280.0f));
 
         // Integration
         Vec3 accel = vec3_scale(total_force, 1.0f / car->mass);
         car->velocity = vec3_add(car->velocity, vec3_scale(accel, sub_dt));
+
+        // Lateral Grip Constraint (eliminates icy sliding: locks velocity to vehicle heading unless drifting)
+        Mat4 ch_rot = quat_to_mat4(car->orientation);
+        Vec3 ch_fwd = vec3(ch_rot.m[8], ch_rot.m[9], ch_rot.m[10]);
+        Vec3 ch_right = vec3(ch_rot.m[0], ch_rot.m[1], ch_rot.m[2]);
+        Vec3 ch_up = vec3(ch_rot.m[4], ch_rot.m[5], ch_rot.m[6]);
+
+        float v_forward = vec3_dot(car->velocity, ch_fwd);
+        float v_lateral = vec3_dot(car->velocity, ch_right);
+        float v_vertical = vec3_dot(car->velocity, ch_up);
+
+        float lateral_slip_retained = car->handbrake ? 0.88f : 0.08f;
+        v_lateral *= powf(lateral_slip_retained, sub_dt * 30.0f);
+
+        // Reconstruct gripped velocity
+        car->velocity = vec3_add(
+            vec3_scale(ch_fwd, v_forward),
+            vec3_add(vec3_scale(ch_right, v_lateral), vec3_scale(ch_up, v_vertical))
+        );
+
         car->position = vec3_add(car->position, vec3_scale(car->velocity, sub_dt));
+
+        // Direct Ackermann Yaw Steering Authority (turns exactly proportional to speed and steer input)
+        float wheelbase = 2.90f;
+        float target_yaw_rate = (v_forward / wheelbase) * tanf(current_steer);
+        float yaw_blend = car->handbrake ? 0.35f : 0.85f;
+        car->angular_velocity.y += (target_yaw_rate - car->angular_velocity.y) * yaw_blend;
 
         Vec3 ang_accel = vec3(
             total_torque.x * car->inv_inertia.x,
-            total_torque.y * car->inv_inertia.y,
+            total_torque.y * car->inv_inertia.y * 0.15f,
             total_torque.z * car->inv_inertia.z
         );
         car->angular_velocity = vec3_add(car->angular_velocity, vec3_scale(ang_accel, sub_dt));

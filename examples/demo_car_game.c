@@ -322,7 +322,7 @@ int main(void) {
         float target_throttle = key_up ? 1.0f : 0.0f;
         float target_brake = key_down ? 1.0f : 0.0f;
 
-        // Steering: Left key = -1.0 (turns left toward -X), Right key = +1.0 (turns right toward +X)
+        // Steering: A/Left key steers left (-1.0), D/Right key steers right (+1.0)
         float target_steer = 0.0f;
         if (key_left) target_steer -= 1.0f;
         if (key_right) target_steer += 1.0f;
