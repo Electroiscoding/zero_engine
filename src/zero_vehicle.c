@@ -1,4 +1,5 @@
 #include "zero_vehicle.h"
+#include "zero_track_spline.h"
 #include <math.h>
 #include <string.h>
 
@@ -198,6 +199,54 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
         car->orientation.w += dq.w * sub_dt;
         car->orientation = quat_normalize(car->orientation);
     }
+
+    // Track barrier collision resolution (keeps car on course, prevents launching into sky)
+    float min_dist_sq = 1e9f;
+    int best_i = 0;
+    for (int i = 0; i < ZERO_TRACK_SPLINE_COUNT; ++i) {
+        float dx = car->position.x - g_track_spline[i][0];
+        float dz = car->position.z - g_track_spline[i][1];
+        float dsq = dx * dx + dz * dz;
+        if (dsq < min_dist_sq) {
+            min_dist_sq = dsq;
+            best_i = i;
+        }
+    }
+    int next_i = (best_i + 1) % ZERO_TRACK_SPLINE_COUNT;
+    float seg_dx = g_track_spline[next_i][0] - g_track_spline[best_i][0];
+    float seg_dz = g_track_spline[next_i][1] - g_track_spline[best_i][1];
+    float seg_len = sqrtf(seg_dx * seg_dx + seg_dz * seg_dz);
+    if (seg_len > 1e-4f) {
+        float nx = -seg_dz / seg_len;
+        float nz = seg_dx / seg_len;
+        float to_x = car->position.x - g_track_spline[best_i][0];
+        float to_z = car->position.z - g_track_spline[best_i][1];
+        float lat_offset = to_x * nx + to_z * nz;
+        float max_dist = ZERO_TRACK_BARRIER_DIST - 1.2f;
+        if (lat_offset > max_dist) {
+            float pen = lat_offset - max_dist;
+            car->position.x -= nx * pen;
+            car->position.z -= nz * pen;
+            float vn = car->velocity.x * nx + car->velocity.z * nz;
+            if (vn > 0.0f) {
+                car->velocity.x -= 1.5f * vn * nx;
+                car->velocity.z -= 1.5f * vn * nz;
+            }
+        } else if (lat_offset < -max_dist) {
+            float pen = -max_dist - lat_offset;
+            car->position.x += nx * pen;
+            car->position.z += nz * pen;
+            float vn = car->velocity.x * (-nx) + car->velocity.z * (-nz);
+            if (vn > 0.0f) {
+                car->velocity.x -= 1.5f * vn * (-nx);
+                car->velocity.z -= 1.5f * vn * (-nz);
+            }
+        }
+    }
+
+    // Ground clamp to prevent flying into sky
+    if (car->position.y < 0.20f) car->position.y = 0.20f;
+    if (car->position.y > 1.80f) car->position.y = 1.80f;
 
     // Update transform matrix
     Mat4 rot_mat = quat_to_mat4(car->orientation);

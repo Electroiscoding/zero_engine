@@ -62,7 +62,7 @@ static const char *get_custom_frag_shader(void) {
         "uniform float u_shininess;\n"
         "uniform float u_specular_strength;\n"
         "uniform float u_time;\n"
-        "uniform int u_material_mode;\n"
+        "uniform float u_material_mode;\n"
         "out vec4 frag_color;\n"
         "void main() {\n"
         "    vec3 norm = normalize(v_normal);\n"
@@ -73,38 +73,41 @@ static const char *get_custom_frag_shader(void) {
         "    vec3 half_dir = normalize(light_dir + view_dir);\n"
         "    float spec = pow(max(dot(norm, half_dir), 0.0), u_shininess);\n"
         "    vec3 specular = spec * u_light_color * u_specular_strength;\n"
+        "    // Advanced Schlick Fresnel clearcoat\n"
+        "    float NdotV = max(dot(norm, view_dir), 0.0);\n"
+        "    float fresnel = 0.04 + 0.96 * pow(1.0 - NdotV, 5.0);\n"
         "    vec3 base_color = u_object_color;\n"
-        "    // Mode 1: Road Asphalt with dashed centerline\n"
-        "    if (u_material_mode == 1) {\n"
-        "        float lane_dist = abs(v_uv.x - 0.5);\n"
-        "        if (lane_dist < 0.015) {\n"
+        "    // Material 1: Grand Prix Asphalt with crisp white dashed centerline\n"
+        "    if (u_material_mode > 0.5 && u_material_mode < 1.5) {\n"
+        "        float lane = abs(v_uv.x - 0.5);\n"
+        "        if (lane < 0.016) {\n"
         "            float dash = sin(v_uv.y * 3.14159);\n"
-        "            if (dash > 0.0) base_color = vec3(0.96, 0.94, 0.88);\n"
+        "            if (dash > 0.0) base_color = vec3(0.96, 0.95, 0.90);\n"
         "        }\n"
         "    }\n"
-        "    // Mode 2: Red/White Curbstones\n"
-        "    else if (u_material_mode == 2) {\n"
+        "    // Material 2: Alternating Red/White Formula Curbs\n"
+        "    else if (u_material_mode > 1.5 && u_material_mode < 2.5) {\n"
         "        float step_val = mod(v_uv.y, 2.0);\n"
-        "        base_color = (step_val < 1.0) ? vec3(0.92, 0.12, 0.14) : vec3(0.96, 0.96, 0.96);\n"
+        "        base_color = (step_val < 1.0) ? vec3(0.90, 0.10, 0.12) : vec3(0.96, 0.96, 0.96);\n"
         "    }\n"
-        "    // Mode 3: Checkerboard infield & start line\n"
-        "    else if (u_material_mode == 3) {\n"
-        "        float cx = floor(v_world_pos.x * 0.15);\n"
-        "        float cz = floor(v_world_pos.z * 0.15);\n"
+        "    // Material 3: Lush green terrain with field pattern\n"
+        "    else if (u_material_mode > 2.5 && u_material_mode < 3.5) {\n"
+        "        float cx = floor(v_world_pos.x * 0.12);\n"
+        "        float cz = floor(v_world_pos.z * 0.12);\n"
         "        float check = mod(cx + cz, 2.0);\n"
-        "        base_color = (check < 1.0) ? vec3(0.22, 0.55, 0.20) : vec3(0.18, 0.48, 0.16);\n"
+        "        base_color = (check < 1.0) ? vec3(0.24, 0.55, 0.22) : vec3(0.19, 0.48, 0.18);\n"
         "    }\n"
-        "    // Mode 4: Tire Barrier Stripes\n"
-        "    else if (u_material_mode == 4) {\n"
+        "    // Material 4: Safety barriers with two-tone Armco blue/white\n"
+        "    else if (u_material_mode > 3.5 && u_material_mode < 4.5) {\n"
         "        float b_step = mod(v_world_pos.x + v_world_pos.z, 4.0);\n"
-        "        base_color = (b_step < 2.0) ? vec3(0.25, 0.45, 0.95) : vec3(0.90, 0.90, 0.92);\n"
+        "        base_color = (b_step < 2.0) ? vec3(0.22, 0.45, 0.92) : vec3(0.92, 0.92, 0.95);\n"
         "    }\n"
-        "    // Sky atmospheric distance fog\n"
+        "    // Sky horizon atmospheric gradient\n"
         "    float dist = length(u_camera_pos - v_world_pos);\n"
-        "    float fog_factor = clamp((dist - 60.0) / 450.0, 0.0, 0.85);\n"
-        "    vec3 lit_color = (u_ambient_color + diffuse + specular) * base_color;\n"
-        "    vec3 sky_color = vec3(0.50, 0.70, 0.95);\n"
-        "    vec3 final_color = mix(lit_color, sky_color, fog_factor);\n"
+        "    float fog_factor = clamp((dist - 80.0) / 400.0, 0.0, 0.85);\n"
+        "    vec3 lit_color = (u_ambient_color + diffuse + specular * (1.0 + fresnel * 2.0)) * base_color;\n"
+        "    vec3 sky_horizon = vec3(0.65, 0.78, 0.92);\n"
+        "    vec3 final_color = mix(lit_color, sky_horizon, fog_factor);\n"
         "    frag_color = vec4(final_color, 1.0);\n"
         "}\n";
 }
@@ -138,7 +141,6 @@ int main(void) {
     ZeroMeshData curb_data = zero_obj_parse_file("assets/models/track_curbs.obj", &arena);
     ZeroMeshData barrier_data = zero_obj_parse_file("assets/models/track_barriers.obj", &arena);
     ZeroMeshData terrain_data = zero_obj_parse_file("assets/models/track_terrain.obj", &arena);
-    ZeroMeshData gantry_data = zero_obj_parse_file("assets/models/track_gantry.obj", &arena);
 
     if (car_data.vertex_count == 0 || wheel_data.vertex_count == 0 ||
         road_data.vertex_count == 0 || terrain_data.vertex_count == 0) {
@@ -154,7 +156,6 @@ int main(void) {
     ZeroMesh curb_mesh = zero_mesh_upload(&curb_data);
     ZeroMesh barrier_mesh = zero_mesh_upload(&barrier_data);
     ZeroMesh terrain_mesh = zero_mesh_upload(&terrain_data);
-    ZeroMesh gantry_mesh = zero_mesh_upload(&gantry_data);
 
     ZeroShader shader = zero_shader_create(get_custom_vert_shader(), get_custom_frag_shader());
     if (!shader.is_valid) {
@@ -164,11 +165,11 @@ int main(void) {
         return 1;
     }
 
-    // Spawn vehicle at starting grid
-    ZeroVehicle car = zero_vehicle_create(vec3(155.0f, 0.70f, 0.0f));
+    // Spawn vehicle on starting straight facing along track direction (+Z)
+    ZeroVehicle car = zero_vehicle_create(vec3(125.0f, 0.75f, 0.0f));
 
     ZeroCamera cam = zero_camera_create(
-        vec3(155.0f, 3.2f, -8.0f),
+        vec3(125.0f, 3.2f, -8.0f),
         ZERO_DEG2RAD(65.0f),
         (float)platform.width / (float)platform.height,
         0.1f,
@@ -189,7 +190,8 @@ int main(void) {
     printf(" Controls:\n");
     printf("   [W] / [Up Arrow]    : Throttle / Accelerate Forward\n");
     printf("   [S] / [Down Arrow]  : Brake / Active Reverse Gear\n");
-    printf("   [A] / [D] / [Arrows]: Steer Left / Right (Speed-sensitive)\n");
+    printf("   [A] / [Left Arrow]  : Steer Left\n");
+    printf("   [D] / [Right Arrow] : Steer Right\n");
     printf("   [Spacebar]          : Handbrake (Initiates High-Speed Drift!)\n");
     printf("   [C]                 : Switch Camera View (Chase Cam / Hood Cam)\n");
     printf("   [R]                 : Reset Vehicle to Start Grid\n");
@@ -205,7 +207,6 @@ int main(void) {
         zero_platform_poll_events(&platform);
 
         // Player input processing with both WASD and Arrow Keys support
-        // Keys: XK_Up = 256+2, XK_Down = 256+4, XK_Left = 256+1, XK_Right = 256+3
         bool key_up = platform.keys['w'] || platform.keys['W'] || platform.keys[258];
         bool key_down = platform.keys['s'] || platform.keys['S'] || platform.keys[260];
         bool key_left = platform.keys['a'] || platform.keys['A'] || platform.keys[257];
@@ -213,14 +214,16 @@ int main(void) {
 
         float target_throttle = key_up ? 1.0f : 0.0f;
         float target_brake = key_down ? 1.0f : 0.0f;
+
+        // Steering: target_steer > 0 for Left turn, target_steer < 0 for Right turn
         float target_steer = 0.0f;
-        if (key_left) target_steer -= 1.0f;
-        if (key_right) target_steer += 1.0f;
+        if (key_left) target_steer += 1.0f;
+        if (key_right) target_steer -= 1.0f;
 
         car.handbrake = platform.keys[' '];
 
         // Smooth steering response with speed sensitivity
-        float steer_speed = 8.5f * dt;
+        float steer_speed = 9.0f * dt;
         steer_smooth += (target_steer - steer_smooth) * steer_speed;
         car.steer_input = steer_smooth;
 
@@ -228,7 +231,7 @@ int main(void) {
         car.brake_input = target_brake;
 
         if (platform.keys['r'] || platform.keys['R']) {
-            zero_vehicle_reset(&car, vec3(155.0f, 0.70f, 0.0f));
+            zero_vehicle_reset(&car, vec3(125.0f, 0.75f, 0.0f));
         }
 
         static bool c_pressed_prev = false;
@@ -244,7 +247,7 @@ int main(void) {
         // Update real vehicle physics with gravity and ground suspension
         zero_vehicle_update(&car, dt, track_ground_fn);
 
-        // Chase camera physics & interpolation
+        // Chase camera physics & interpolation behind vehicle
         Mat4 car_rot = quat_to_mat4(car.orientation);
         Vec3 car_fwd = vec3(car_rot.m[8], car_rot.m[9], car_rot.m[10]);
         Vec3 car_up = vec3(car_rot.m[4], car_rot.m[5], car_rot.m[6]);
@@ -257,11 +260,12 @@ int main(void) {
             cam.right = vec3_normalize(vec3_cross(car_fwd, car_up));
             (void)target;
         } else {
+            // Position camera behind and above the car facing forward
             Vec3 desired_cam = vec3_sub(
-                vec3_add(car.position, vec3(0.0f, 2.3f, 0.0f)),
-                vec3_scale(car_fwd, 6.2f)
+                vec3_add(car.position, vec3(0.0f, 2.5f, 0.0f)),
+                vec3_scale(car_fwd, 6.5f)
             );
-            float cam_lerp_factor = 10.0f * dt;
+            float cam_lerp_factor = 12.0f * dt;
             if (cam_lerp_factor > 1.0f) cam_lerp_factor = 1.0f;
             cam_smooth_pos = vec3_lerp(cam_smooth_pos, desired_cam, cam_lerp_factor);
             cam.position = cam_smooth_pos;
@@ -276,8 +280,8 @@ int main(void) {
         cam.aspect = (float)platform.width / (float)platform.height;
         glViewport(0, 0, (GLsizei)platform.width, (GLsizei)platform.height);
 
-        // Sky blue atmospheric clear
-        glClearColor(0.45f, 0.65f, 0.90f, 1.0f);
+        // Sky atmosphere clear
+        glClearColor(0.48f, 0.68f, 0.92f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         zero_shader_bind(&shader);
@@ -289,58 +293,51 @@ int main(void) {
         zero_shader_set_vec3(&shader, "u_camera_pos", cam.position);
         zero_shader_set_float(&shader, "u_time", (float)current_time);
 
-        // Outdoor sunny daylight lighting
-        zero_shader_set_vec3(&shader, "u_light_dir", vec3(-0.45f, -0.80f, -0.38f));
-        zero_shader_set_vec3(&shader, "u_light_color", vec3(1.0f, 0.98f, 0.92f));
-        zero_shader_set_vec3(&shader, "u_ambient_color", vec3(0.35f, 0.40f, 0.45f));
+        // Outdoor sunny lighting
+        zero_shader_set_vec3(&shader, "u_light_dir", vec3(-0.45f, -0.82f, -0.35f));
+        zero_shader_set_vec3(&shader, "u_light_color", vec3(1.0f, 0.98f, 0.94f));
+        zero_shader_set_vec3(&shader, "u_ambient_color", vec3(0.36f, 0.40f, 0.46f));
 
         Mat4 identity_mat = mat4_identity();
         zero_shader_set_mat4(&shader, "u_model", identity_mat);
 
-        // 1. Render Vast Grass Terrain (Patterned greens)
+        // 1. Render Vast Grass Terrain (Green field grid)
         zero_shader_set_float(&shader, "u_shininess", 8.0f);
         zero_shader_set_float(&shader, "u_specular_strength", 0.05f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.20f, 0.52f, 0.18f));
+        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.22f, 0.54f, 0.20f));
         zero_shader_set_float(&shader, "u_material_mode", 3.0f);
         zero_mesh_draw(&terrain_mesh);
 
         // 2. Render Road Asphalt Circuit (Dark tarmac with lane stripes)
-        zero_shader_set_float(&shader, "u_shininess", 16.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.20f);
+        zero_shader_set_float(&shader, "u_shininess", 20.0f);
+        zero_shader_set_float(&shader, "u_specular_strength", 0.25f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.18f, 0.18f, 0.20f));
         zero_shader_set_float(&shader, "u_material_mode", 1.0f);
         zero_mesh_draw(&road_mesh);
 
         // 3. Render Curbs (Red and White alternating rumble strips)
-        zero_shader_set_float(&shader, "u_shininess", 24.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.35f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.90f, 0.15f, 0.15f));
+        zero_shader_set_float(&shader, "u_shininess", 32.0f);
+        zero_shader_set_float(&shader, "u_specular_strength", 0.40f);
+        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.90f, 0.12f, 0.14f));
         zero_shader_set_float(&shader, "u_material_mode", 2.0f);
         zero_mesh_draw(&curb_mesh);
 
-        // 4. Render Perimeter Barriers (Blue/White safety armco walls)
-        zero_shader_set_float(&shader, "u_shininess", 32.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.45f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.30f, 0.50f, 0.90f));
+        // 4. Render Perimeter Barriers (Armco blue and white safety walls)
+        zero_shader_set_float(&shader, "u_shininess", 48.0f);
+        zero_shader_set_float(&shader, "u_specular_strength", 0.50f);
+        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.25f, 0.48f, 0.92f));
         zero_shader_set_float(&shader, "u_material_mode", 4.0f);
         zero_mesh_draw(&barrier_mesh);
 
-        // 5. Render Start/Finish Overhead Gantry Arch
-        zero_shader_set_float(&shader, "u_shininess", 64.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.60f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.85f, 0.85f, 0.20f));
-        zero_shader_set_float(&shader, "u_material_mode", 0.0f);
-        zero_mesh_draw(&gantry_mesh);
-
-        // 6. Render Sports Car Chassis (Deep Glossy Italian Racing Red with Blinn-Phong highlight)
+        // 5. Render Sports Car Chassis (Glossy Racing Red with Fresnel Clearcoat)
         zero_shader_set_mat4(&shader, "u_model", car.transform);
-        zero_shader_set_float(&shader, "u_shininess", 96.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.85f);
+        zero_shader_set_float(&shader, "u_shininess", 128.0f);
+        zero_shader_set_float(&shader, "u_specular_strength", 0.95f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.92f, 0.08f, 0.12f));
         zero_shader_set_float(&shader, "u_material_mode", 0.0f);
         zero_mesh_draw(&car_mesh);
 
-        // 7. Render 4 Dynamic Suspension Wheels with realistic spinning & steering
+        // 6. Render 4 Dynamic Suspension Wheels with spinning & steering
         for (int i = 0; i < 4; ++i) {
             ZeroWheel *w = &car.wheels[i];
             Vec3 wheel_local = vec3(w->hardpoint.x, -w->current_length, w->hardpoint.z);
@@ -349,7 +346,6 @@ int main(void) {
             if (w->is_front) {
                 wheel_steer = quat_to_mat4(quat_from_axis_angle(vec3(0, 1, 0), w->steer_angle));
             }
-            // Dynamic tire spinning based on travel speed
             float spin_speed = vec3_length(car.velocity) / w->radius;
             static float wheel_spin_angles[4] = {0};
             wheel_spin_angles[i] += (car.velocity.z >= 0.0f ? 1.0f : -1.0f) * spin_speed * dt;
@@ -359,8 +355,8 @@ int main(void) {
             Mat4 wheel_world_mat = mat4_mul(car.transform, wheel_local_mat);
 
             zero_shader_set_mat4(&shader, "u_model", wheel_world_mat);
-            zero_shader_set_float(&shader, "u_shininess", 16.0f);
-            zero_shader_set_float(&shader, "u_specular_strength", 0.25f);
+            zero_shader_set_float(&shader, "u_shininess", 24.0f);
+            zero_shader_set_float(&shader, "u_specular_strength", 0.30f);
             zero_shader_set_vec3(&shader, "u_object_color", vec3(0.12f, 0.13f, 0.15f));
             zero_shader_set_float(&shader, "u_material_mode", 0.0f);
             zero_mesh_draw(&wheel_mesh);
@@ -388,7 +384,6 @@ int main(void) {
     zero_mesh_destroy(&curb_mesh);
     zero_mesh_destroy(&barrier_mesh);
     zero_mesh_destroy(&terrain_mesh);
-    zero_mesh_destroy(&gantry_mesh);
     zero_shader_destroy(&shader);
     zero_arena_destroy(&arena);
     zero_platform_shutdown(&platform);
