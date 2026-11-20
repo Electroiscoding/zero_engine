@@ -27,7 +27,8 @@ static inline Vec3 vec3_lerp(Vec3 a, Vec3 b, float t) {
     );
 }
 
-static const char *get_custom_vert_shader(void) {
+// Next-Gen GTA-Style Unified 3D PBR and 2D HUD Vertex Shader
+static const char *get_nextgen_vert_shader(void) {
     return 
         "#version 330 core\n"
         "layout(location = 0) in vec3 a_pos;\n"
@@ -36,19 +37,28 @@ static const char *get_custom_vert_shader(void) {
         "uniform mat4 u_model;\n"
         "uniform mat4 u_view;\n"
         "uniform mat4 u_proj;\n"
+        "uniform float u_is_hud;\n"
         "out vec3 v_normal;\n"
         "out vec3 v_world_pos;\n"
         "out vec2 v_uv;\n"
         "void main() {\n"
-        "    vec4 world_pos = u_model * vec4(a_pos, 1.0);\n"
-        "    v_world_pos = world_pos.xyz;\n"
-        "    v_normal = mat3(u_model) * a_normal;\n"
-        "    v_uv = a_uv;\n"
-        "    gl_Position = u_proj * u_view * world_pos;\n"
+        "    if (u_is_hud > 0.5) {\n"
+        "        v_normal = vec3(0.0, 0.0, 1.0);\n"
+        "        v_world_pos = a_pos;\n"
+        "        v_uv = a_uv;\n"
+        "        gl_Position = u_proj * vec4(a_pos, 1.0);\n"
+        "    } else {\n"
+        "        vec4 world_pos = u_model * vec4(a_pos, 1.0);\n"
+        "        v_world_pos = world_pos.xyz;\n"
+        "        v_normal = mat3(u_model) * a_normal;\n"
+        "        v_uv = a_uv;\n"
+        "        gl_Position = u_proj * u_view * world_pos;\n"
+        "    }\n"
         "}\n";
 }
 
-static const char *get_custom_frag_shader(void) {
+// Next-Gen Cook-Torrance Microfacet GGX Metallic PBR + Layered Clearcoat + 2D HUD Fragment Shader
+static const char *get_nextgen_frag_shader(void) {
     return 
         "#version 330 core\n"
         "in vec3 v_normal;\n"
@@ -59,57 +69,155 @@ static const char *get_custom_frag_shader(void) {
         "uniform vec3 u_ambient_color;\n"
         "uniform vec3 u_object_color;\n"
         "uniform vec3 u_camera_pos;\n"
-        "uniform float u_shininess;\n"
-        "uniform float u_specular_strength;\n"
+        "uniform float u_roughness;\n"
+        "uniform float u_metallic;\n"
         "uniform float u_time;\n"
         "uniform float u_material_mode;\n"
+        "uniform float u_is_hud;\n"
         "out vec4 frag_color;\n"
+        "\n"
+        "const float PI = 3.14159265359;\n"
+        "\n"
+        "float distributionGGX(vec3 N, vec3 H, float roughness) {\n"
+        "    float a = roughness * roughness;\n"
+        "    float a2 = a * a;\n"
+        "    float NdotH = max(dot(N, H), 0.0);\n"
+        "    float NdotH2 = NdotH * NdotH;\n"
+        "    float denom = (NdotH2 * (a2 - 1.0) + 1.0);\n"
+        "    return a2 / (PI * denom * denom + 0.0001);\n"
+        "}\n"
+        "\n"
+        "float geometrySchlickGGX(float NdotV, float roughness) {\n"
+        "    float r = (roughness + 1.0);\n"
+        "    float k = (r * r) / 8.0;\n"
+        "    return NdotV / (NdotV * (1.0 - k) + k + 0.0001);\n"
+        "}\n"
+        "\n"
+        "float geometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {\n"
+        "    float NdotV = max(dot(N, V), 0.0);\n"
+        "    float NdotL = max(dot(N, L), 0.0);\n"
+        "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);\n"
+        "}\n"
+        "\n"
+        "vec3 fresnelSchlick(float cosTheta, vec3 F0) {\n"
+        "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);\n"
+        "}\n"
+        "\n"
         "void main() {\n"
-        "    vec3 norm = normalize(v_normal);\n"
-        "    vec3 light_dir = normalize(-u_light_dir);\n"
-        "    float diff = max(dot(norm, light_dir), 0.0);\n"
-        "    vec3 diffuse = diff * u_light_color;\n"
-        "    vec3 view_dir = normalize(u_camera_pos - v_world_pos);\n"
-        "    vec3 half_dir = normalize(light_dir + view_dir);\n"
-        "    float spec = pow(max(dot(norm, half_dir), 0.0), u_shininess);\n"
-        "    vec3 specular = spec * u_light_color * u_specular_strength;\n"
-        "    // Advanced Schlick Fresnel clearcoat\n"
-        "    float NdotV = max(dot(norm, view_dir), 0.0);\n"
-        "    float fresnel = 0.04 + 0.96 * pow(1.0 - NdotV, 5.0);\n"
-        "    vec3 base_color = u_object_color;\n"
-        "    // Material 1: Grand Prix Asphalt with crisp white dashed centerline\n"
+        "    if (u_is_hud > 0.5) {\n"
+        "        frag_color = vec4(u_object_color, 1.0);\n"
+        "        return;\n"
+        "    }\n"
+        "\n"
+        "    vec3 N = normalize(v_normal);\n"
+        "    vec3 V = normalize(u_camera_pos - v_world_pos);\n"
+        "    vec3 L = normalize(-u_light_dir);\n"
+        "    vec3 H = normalize(V + L);\n"
+        "\n"
+        "    float NdotL = max(dot(N, L), 0.0);\n"
+        "    float NdotV = max(dot(N, V), 0.0);\n"
+        "    float NdotH = max(dot(N, H), 0.0);\n"
+        "    float VdotH = max(dot(V, H), 0.0);\n"
+        "\n"
+        "    vec3 albedo = u_object_color;\n"
+        "    float roughness = clamp(u_roughness, 0.04, 0.96);\n"
+        "    float metallic = clamp(u_metallic, 0.0, 1.0);\n"
+        "\n"
+        "    // Mode 1: Asphalt racetrack with procedural dashed center stripes\n"
         "    if (u_material_mode > 0.5 && u_material_mode < 1.5) {\n"
         "        float lane = abs(v_uv.x - 0.5);\n"
         "        if (lane < 0.016) {\n"
         "            float dash = sin(v_uv.y * 3.14159);\n"
-        "            if (dash > 0.0) base_color = vec3(0.96, 0.95, 0.90);\n"
+        "            if (dash > 0.0) albedo = vec3(0.96, 0.95, 0.90);\n"
         "        }\n"
         "    }\n"
-        "    // Material 2: Alternating Red/White Formula Curbs\n"
+        "    // Mode 2: Formula 1 Red/White Rumble Curbs\n"
         "    else if (u_material_mode > 1.5 && u_material_mode < 2.5) {\n"
         "        float step_val = mod(v_uv.y, 2.0);\n"
-        "        base_color = (step_val < 1.0) ? vec3(0.90, 0.10, 0.12) : vec3(0.96, 0.96, 0.96);\n"
+        "        albedo = (step_val < 1.0) ? vec3(0.92, 0.08, 0.10) : vec3(0.96, 0.96, 0.96);\n"
         "    }\n"
-        "    // Material 3: Lush green terrain with field pattern\n"
+        "    // Mode 3: Terrain infield & grass checker\n"
         "    else if (u_material_mode > 2.5 && u_material_mode < 3.5) {\n"
         "        float cx = floor(v_world_pos.x * 0.12);\n"
         "        float cz = floor(v_world_pos.z * 0.12);\n"
         "        float check = mod(cx + cz, 2.0);\n"
-        "        base_color = (check < 1.0) ? vec3(0.24, 0.55, 0.22) : vec3(0.19, 0.48, 0.18);\n"
+        "        albedo = (check < 1.0) ? vec3(0.24, 0.55, 0.22) : vec3(0.19, 0.48, 0.18);\n"
         "    }\n"
-        "    // Material 4: Safety barriers with two-tone Armco blue/white\n"
+        "    // Mode 4: Safety barriers with dual-tone blue/white armco stripes\n"
         "    else if (u_material_mode > 3.5 && u_material_mode < 4.5) {\n"
         "        float b_step = mod(v_world_pos.x + v_world_pos.z, 4.0);\n"
-        "        base_color = (b_step < 2.0) ? vec3(0.22, 0.45, 0.92) : vec3(0.92, 0.92, 0.95);\n"
+        "        albedo = (b_step < 2.0) ? vec3(0.22, 0.45, 0.92) : vec3(0.92, 0.92, 0.95);\n"
         "    }\n"
-        "    // Sky horizon atmospheric gradient\n"
+        "\n"
+        "    // PBR F0 reflectance calculation\n"
+        "    vec3 F0 = mix(vec3(0.04), albedo, metallic);\n"
+        "\n"
+        "    // Cook-Torrance BRDF microfacet specular\n"
+        "    float NDF = distributionGGX(N, H, roughness);\n"
+        "    float G = geometrySmith(N, V, L, roughness);\n"
+        "    vec3 F = fresnelSchlick(VdotH, F0);\n"
+        "\n"
+        "    vec3 numerator = NDF * G * F;\n"
+        "    float denominator = 4.0 * NdotV * NdotL + 0.0001;\n"
+        "    vec3 specular = numerator / denominator;\n"
+        "\n"
+        "    // Energy conservation: kD (diffuse) + kS (specular) = 1.0\n"
+        "    vec3 kS = F;\n"
+        "    vec3 kD = vec3(1.0) - kS;\n"
+        "    kD *= (1.0 - metallic);\n"
+        "\n"
+        "    // Direct radiance contribution\n"
+        "    vec3 diffuse = (kD * albedo / PI) * u_light_color * NdotL;\n"
+        "    vec3 spec_light = specular * u_light_color * NdotL;\n"
+        "\n"
+        "    // Multi-layer Clearcoat specular reflection for GTA-grade automotive gloss\n"
+        "    float clearcoat_NDF = distributionGGX(N, H, 0.12);\n"
+        "    float clearcoat_G = geometrySmith(N, V, L, 0.12);\n"
+        "    vec3 clearcoat_F = fresnelSchlick(VdotH, vec3(0.04));\n"
+        "    vec3 clearcoat_spec = (clearcoat_NDF * clearcoat_G * clearcoat_F) / (4.0 * NdotV * NdotL + 0.0001) * 0.45;\n"
+        "\n"
+        "    // Sky reflection gradient\n"
+        "    vec3 R = reflect(-V, N);\n"
+        "    vec3 sky_zenith = vec3(0.28, 0.52, 0.88);\n"
+        "    vec3 sky_horizon = vec3(0.72, 0.82, 0.95);\n"
+        "    vec3 env_reflection = mix(sky_horizon, sky_zenith, clamp(R.y * 0.5 + 0.5, 0.0, 1.0));\n"
+        "    vec3 ambient = u_ambient_color * albedo + env_reflection * F * 0.25;\n"
+        "\n"
+        "    vec3 color = ambient + diffuse + spec_light + clearcoat_spec * NdotL;\n"
+        "\n"
+        "    // Atmospheric horizon haze\n"
         "    float dist = length(u_camera_pos - v_world_pos);\n"
-        "    float fog_factor = clamp((dist - 80.0) / 400.0, 0.0, 0.85);\n"
-        "    vec3 lit_color = (u_ambient_color + diffuse + specular * (1.0 + fresnel * 2.0)) * base_color;\n"
-        "    vec3 sky_horizon = vec3(0.65, 0.78, 0.92);\n"
-        "    vec3 final_color = mix(lit_color, sky_horizon, fog_factor);\n"
-        "    frag_color = vec4(final_color, 1.0);\n"
+        "    float fog_factor = clamp((dist - 80.0) / 400.0, 0.0, 0.80);\n"
+        "    color = mix(color, sky_horizon, fog_factor);\n"
+        "\n"
+        "    // Reinhard tone mapping + gamma correction\n"
+        "    color = color / (color + vec3(1.0));\n"
+        "    color = pow(color, vec3(1.0 / 2.2));\n"
+        "\n"
+        "    frag_color = vec4(color, 1.0);\n"
         "}\n";
+}
+
+// 2D Quad Generator for HUD elements
+static ZeroMesh create_hud_quad(void) {
+    ZeroVertex verts[4] = {
+        {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+        {{1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+        {{0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}}
+    };
+    uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    ZeroMeshData data = {verts, 4, indices, 6};
+    return zero_mesh_upload(&data);
+}
+
+static void render_hud_quad(ZeroShader *shader, ZeroMesh *quad, float x, float y, float w, float h, Vec3 color) {
+    Mat4 trans = mat4_translate(vec3(x, y, 0.0f));
+    Mat4 scl = mat4_scale(vec3(w, h, 1.0f));
+    Mat4 model = mat4_mul(trans, scl);
+    zero_shader_set_mat4(shader, "u_model", model);
+    zero_shader_set_vec3(shader, "u_object_color", color);
+    zero_mesh_draw(quad);
 }
 
 int main(void) {
@@ -156,10 +264,11 @@ int main(void) {
     ZeroMesh curb_mesh = zero_mesh_upload(&curb_data);
     ZeroMesh barrier_mesh = zero_mesh_upload(&barrier_data);
     ZeroMesh terrain_mesh = zero_mesh_upload(&terrain_data);
+    ZeroMesh hud_quad = create_hud_quad();
 
-    ZeroShader shader = zero_shader_create(get_custom_vert_shader(), get_custom_frag_shader());
+    ZeroShader shader = zero_shader_create(get_nextgen_vert_shader(), get_nextgen_frag_shader());
     if (!shader.is_valid) {
-        fprintf(stderr, "Failed to compile custom shader\n");
+        fprintf(stderr, "Failed to compile next-gen PBR shader\n");
         zero_arena_destroy(&arena);
         zero_platform_shutdown(&platform);
         return 1;
@@ -176,8 +285,6 @@ int main(void) {
         1500.0f
     );
 
-    glEnable(GL_DEPTH_TEST);
-
     double last_time = zero_platform_get_time();
     double hud_timer = 0.0;
     bool cockpit_view = false;
@@ -185,7 +292,7 @@ int main(void) {
     Vec3 cam_smooth_pos = cam.position;
 
     printf("\n============================================================\n");
-    printf("===      ZERO RACER: GRAND PRIX CIRCUIT & REAL PHYSICS   ===\n");
+    printf("===   ZERO RACER: NEXT-GEN PBR & GRAND PRIX SIMULATOR    ===\n");
     printf("============================================================\n");
     printf(" Controls:\n");
     printf("   [W] / [Up Arrow]    : Throttle / Accelerate Forward\n");
@@ -215,15 +322,15 @@ int main(void) {
         float target_throttle = key_up ? 1.0f : 0.0f;
         float target_brake = key_down ? 1.0f : 0.0f;
 
-        // Steering: target_steer > 0 for Left turn, target_steer < 0 for Right turn
+        // Steering: Left key = -1.0 (turns left toward -X), Right key = +1.0 (turns right toward +X)
         float target_steer = 0.0f;
-        if (key_left) target_steer += 1.0f;
-        if (key_right) target_steer -= 1.0f;
+        if (key_left) target_steer -= 1.0f;
+        if (key_right) target_steer += 1.0f;
 
         car.handbrake = platform.keys[' '];
 
-        // Smooth steering response with speed sensitivity
-        float steer_speed = 9.0f * dt;
+        // Responsive steering response with speed sensitivity
+        float steer_speed = 10.0f * dt;
         steer_smooth += (target_steer - steer_smooth) * steer_speed;
         car.steer_input = steer_smooth;
 
@@ -260,7 +367,6 @@ int main(void) {
             cam.right = vec3_normalize(vec3_cross(car_fwd, car_up));
             (void)target;
         } else {
-            // Position camera behind and above the car facing forward
             Vec3 desired_cam = vec3_sub(
                 vec3_add(car.position, vec3(0.0f, 2.5f, 0.0f)),
                 vec3_scale(car_fwd, 6.5f)
@@ -276,15 +382,17 @@ int main(void) {
             cam.up = vec3_normalize(vec3_cross(cam.right, cam.forward));
         }
 
-        // Rendering pass
+        // 3D Rendering Pass
+        glEnable(GL_DEPTH_TEST);
         cam.aspect = (float)platform.width / (float)platform.height;
         glViewport(0, 0, (GLsizei)platform.width, (GLsizei)platform.height);
 
-        // Sky atmosphere clear
+        // Atmospheric sky clear
         glClearColor(0.48f, 0.68f, 0.92f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         zero_shader_bind(&shader);
+        zero_shader_set_float(&shader, "u_is_hud", 0.0f);
 
         Mat4 view = zero_camera_get_view(&cam);
         Mat4 proj = zero_camera_get_projection(&cam);
@@ -293,47 +401,47 @@ int main(void) {
         zero_shader_set_vec3(&shader, "u_camera_pos", cam.position);
         zero_shader_set_float(&shader, "u_time", (float)current_time);
 
-        // Outdoor sunny lighting
+        // Warm sunny directional lighting
         zero_shader_set_vec3(&shader, "u_light_dir", vec3(-0.45f, -0.82f, -0.35f));
-        zero_shader_set_vec3(&shader, "u_light_color", vec3(1.0f, 0.98f, 0.94f));
-        zero_shader_set_vec3(&shader, "u_ambient_color", vec3(0.36f, 0.40f, 0.46f));
+        zero_shader_set_vec3(&shader, "u_light_color", vec3(1.10f, 1.05f, 0.98f));
+        zero_shader_set_vec3(&shader, "u_ambient_color", vec3(0.28f, 0.32f, 0.38f));
 
         Mat4 identity_mat = mat4_identity();
         zero_shader_set_mat4(&shader, "u_model", identity_mat);
 
-        // 1. Render Vast Grass Terrain (Green field grid)
-        zero_shader_set_float(&shader, "u_shininess", 8.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.05f);
+        // 1. Render Vast Grass Terrain (Green field checker)
+        zero_shader_set_float(&shader, "u_roughness", 0.88f);
+        zero_shader_set_float(&shader, "u_metallic", 0.0f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.22f, 0.54f, 0.20f));
         zero_shader_set_float(&shader, "u_material_mode", 3.0f);
         zero_mesh_draw(&terrain_mesh);
 
-        // 2. Render Road Asphalt Circuit (Dark tarmac with lane stripes)
-        zero_shader_set_float(&shader, "u_shininess", 20.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.25f);
+        // 2. Render Road Asphalt Circuit (Dark tarmac with procedural lane stripes)
+        zero_shader_set_float(&shader, "u_roughness", 0.72f);
+        zero_shader_set_float(&shader, "u_metallic", 0.05f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.18f, 0.18f, 0.20f));
         zero_shader_set_float(&shader, "u_material_mode", 1.0f);
         zero_mesh_draw(&road_mesh);
 
         // 3. Render Curbs (Red and White alternating rumble strips)
-        zero_shader_set_float(&shader, "u_shininess", 32.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.40f);
+        zero_shader_set_float(&shader, "u_roughness", 0.45f);
+        zero_shader_set_float(&shader, "u_metallic", 0.10f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.90f, 0.12f, 0.14f));
         zero_shader_set_float(&shader, "u_material_mode", 2.0f);
         zero_mesh_draw(&curb_mesh);
 
         // 4. Render Perimeter Barriers (Armco blue and white safety walls)
-        zero_shader_set_float(&shader, "u_shininess", 48.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.50f);
+        zero_shader_set_float(&shader, "u_roughness", 0.35f);
+        zero_shader_set_float(&shader, "u_metallic", 0.65f);
         zero_shader_set_vec3(&shader, "u_object_color", vec3(0.25f, 0.48f, 0.92f));
         zero_shader_set_float(&shader, "u_material_mode", 4.0f);
         zero_mesh_draw(&barrier_mesh);
 
-        // 5. Render Sports Car Chassis (Glossy Racing Red with Fresnel Clearcoat)
+        // 5. Render Sports Car Chassis (GTA-grade Cook-Torrance Italian Racing Red with clearcoat)
         zero_shader_set_mat4(&shader, "u_model", car.transform);
-        zero_shader_set_float(&shader, "u_shininess", 128.0f);
-        zero_shader_set_float(&shader, "u_specular_strength", 0.95f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.92f, 0.08f, 0.12f));
+        zero_shader_set_float(&shader, "u_roughness", 0.22f);
+        zero_shader_set_float(&shader, "u_metallic", 0.75f);
+        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.94f, 0.08f, 0.12f));
         zero_shader_set_float(&shader, "u_material_mode", 0.0f);
         zero_mesh_draw(&car_mesh);
 
@@ -355,17 +463,58 @@ int main(void) {
             Mat4 wheel_world_mat = mat4_mul(car.transform, wheel_local_mat);
 
             zero_shader_set_mat4(&shader, "u_model", wheel_world_mat);
-            zero_shader_set_float(&shader, "u_shininess", 24.0f);
-            zero_shader_set_float(&shader, "u_specular_strength", 0.30f);
+            zero_shader_set_float(&shader, "u_roughness", 0.55f);
+            zero_shader_set_float(&shader, "u_metallic", 0.40f);
             zero_shader_set_vec3(&shader, "u_object_color", vec3(0.12f, 0.13f, 0.15f));
             zero_shader_set_float(&shader, "u_material_mode", 0.0f);
             zero_mesh_draw(&wheel_mesh);
         }
 
+        // 2D On-Screen HUD Overlay Pass (Tachometer, Speedometer, Gear, Drift status)
+        glDisable(GL_DEPTH_TEST);
+        zero_shader_set_float(&shader, "u_is_hud", 1.0f);
+        Mat4 ortho_proj = mat4_ortho(0.0f, (float)platform.width, 0.0f, (float)platform.height, -1.0f, 1.0f);
+        zero_shader_set_mat4(&shader, "u_proj", ortho_proj);
+
+        // 1. HUD Background Bar at Bottom Right
+        float hud_x = (float)platform.width - 320.0f;
+        float hud_y = 30.0f;
+        render_hud_quad(&shader, &hud_quad, hud_x, hud_y, 290.0f, 100.0f, vec3(0.05f, 0.06f, 0.08f));
+        render_hud_quad(&shader, &hud_quad, hud_x + 2.0f, hud_y + 2.0f, 286.0f, 96.0f, vec3(0.12f, 0.14f, 0.18f));
+
+        // 2. Speedometer Progress Bar
+        float speed_pct = car.speed_kmh / 200.0f;
+        if (speed_pct > 1.0f) speed_pct = 1.0f;
+        if (speed_pct < 0.0f) speed_pct = 0.0f;
+        render_hud_quad(&shader, &hud_quad, hud_x + 15.0f, hud_y + 60.0f, 260.0f, 18.0f, vec3(0.08f, 0.09f, 0.10f));
+        Vec3 speed_col = vec3_lerp(vec3(0.15f, 0.85f, 0.35f), vec3(0.95f, 0.20f, 0.15f), speed_pct);
+        render_hud_quad(&shader, &hud_quad, hud_x + 15.0f, hud_y + 60.0f, 260.0f * speed_pct, 18.0f, speed_col);
+
+        // 3. RPM Tachometer Bar
+        float rpm_pct = (car.engine_rpm - 1000.0f) / 6500.0f;
+        if (rpm_pct > 1.0f) rpm_pct = 1.0f;
+        if (rpm_pct < 0.0f) rpm_pct = 0.0f;
+        render_hud_quad(&shader, &hud_quad, hud_x + 15.0f, hud_y + 35.0f, 260.0f, 12.0f, vec3(0.08f, 0.09f, 0.10f));
+        Vec3 rpm_col = (rpm_pct > 0.82f) ? vec3(0.95f, 0.15f, 0.10f) : vec3(0.25f, 0.70f, 0.95f);
+        render_hud_quad(&shader, &hud_quad, hud_x + 15.0f, hud_y + 35.0f, 260.0f * rpm_pct, 12.0f, rpm_col);
+
+        // 4. Gear Indicators (Gears 1 to 5)
+        for (int g = 1; g <= 5; ++g) {
+            Vec3 gear_col = (car.gear == g) ? vec3(0.95f, 0.85f, 0.15f) : vec3(0.25f, 0.28f, 0.32f);
+            render_hud_quad(&shader, &hud_quad, hud_x + 15.0f + (g - 1) * 22.0f, hud_y + 12.0f, 16.0f, 12.0f, gear_col);
+        }
+
+        // 5. Active Drift Alert Banner (Flashes vibrant orange when drifting)
+        if (car.is_drifting) {
+            float pulse = 0.5f + 0.5f * sinf((float)current_time * 15.0f);
+            Vec3 drift_col = vec3_lerp(vec3(0.95f, 0.45f, 0.05f), vec3(1.0f, 0.85f, 0.10f), pulse);
+            render_hud_quad(&shader, &hud_quad, hud_x + 140.0f, hud_y + 10.0f, 135.0f, 16.0f, drift_col);
+        }
+
         zero_shader_unbind();
         zero_platform_swap_buffers(&platform);
 
-        // Telemetry HUD print
+        // Console telemetry HUD print
         hud_timer += dt;
         if (hud_timer > 0.25) {
             hud_timer = 0.0;
@@ -384,6 +533,7 @@ int main(void) {
     zero_mesh_destroy(&curb_mesh);
     zero_mesh_destroy(&barrier_mesh);
     zero_mesh_destroy(&terrain_mesh);
+    zero_mesh_destroy(&hud_quad);
     zero_shader_destroy(&shader);
     zero_arena_destroy(&arena);
     zero_platform_shutdown(&platform);

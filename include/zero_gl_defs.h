@@ -107,6 +107,7 @@ extern GLXContext glXCreateNewContext(Display *dpy, GLXFBConfig config, int rend
 extern void glClear(GLbitfield mask);
 extern void glClearColor(GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha);
 extern void glEnable(GLenum cap);
+extern void glDisable(GLenum cap);
 extern void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern void glDrawArrays(GLenum mode, GLint first, GLsizei count);
 extern void glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid *indices);
