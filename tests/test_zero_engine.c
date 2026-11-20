@@ -3,6 +3,9 @@
 #include "zero_math.h"
 #include "zero_platform.h"
 #include "zero_gl_loader.h"
+#include "zero_shader.h"
+#include "zero_mesh.h"
+#include "zero_camera.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -113,6 +116,58 @@ static void test_math_dual_quaternions(void) {
     TEST_ASSERT(fabsf(quat_dot(blended.real, blended.real) - 1.0f) < 1e-5f, "DualQuat blend normalized");
 }
 
+static void test_procedural_meshes(void) {
+    ZeroArena arena = zero_arena_create(2 * 1024 * 1024);
+
+    ZeroMeshData cube = zero_mesh_gen_cube(&arena, 2.0f);
+    TEST_ASSERT(cube.vertex_count == 24, "Cube vertex count must be 24");
+    TEST_ASSERT(cube.index_count == 36, "Cube index count must be 36");
+
+    ZeroMeshData plane = zero_mesh_gen_plane(&arena, 10.0f, 10.0f);
+    TEST_ASSERT(plane.vertex_count == 4, "Plane vertex count must be 4");
+    TEST_ASSERT(plane.index_count == 6, "Plane index count must be 6");
+
+    ZeroMeshData sphere = zero_mesh_gen_sphere(&arena, 1.0f, 16, 16);
+    TEST_ASSERT(sphere.vertex_count == 17 * 17, "Sphere vertex count check");
+    TEST_ASSERT(sphere.index_count == 16 * 16 * 6, "Sphere index count check");
+
+    for (uint32_t i = 0; i < sphere.vertex_count; ++i) {
+        float len = vec3_length(sphere.vertices[i].normal);
+        TEST_ASSERT(fabsf(len - 1.0f) < 1e-3f, "Sphere vertex normals must be normalized");
+    }
+
+    zero_arena_destroy(&arena);
+}
+
+static void test_camera_system(void) {
+    ZeroCamera cam = zero_camera_create(vec3(0.0f, 2.0f, 5.0f), ZERO_DEG2RAD(60.0f), 16.0f / 9.0f, 0.1f, 1000.0f);
+    TEST_ASSERT(cam.position.x == 0.0f && cam.position.y == 2.0f && cam.position.z == 5.0f, "Camera position");
+    TEST_ASSERT(fabsf(cam.forward.z - (-1.0f)) < 1e-4f, "Initial camera forward must face -Z");
+
+    zero_camera_rotate(&cam, 100.0f, 0.0f);
+    TEST_ASSERT(cam.pitch == 89.0f, "Pitch must be clamped to 89 degrees");
+
+    cam.pitch = 0.0f;
+    cam.yaw = -90.0f;
+    zero_camera_update_vectors(&cam);
+
+    ZeroRay center_ray = zero_camera_screen_to_ray(&cam, 640.0f, 360.0f, 1280.0f, 720.0f);
+    TEST_ASSERT(fabsf(center_ray.direction.z - (-1.0f)) < 1e-2f, "Center screen ray must point along camera forward");
+
+    Mat4 view = zero_camera_get_view(&cam);
+    TEST_ASSERT(fabsf(view.m[0] - 1.0f) < 1e-4f, "View matrix X basis");
+    TEST_ASSERT(fabsf(view.m[5] - 1.0f) < 1e-4f, "View matrix Y basis");
+}
+
+static void test_shader_definitions(void) {
+    const char *vs = zero_shader_default_vert();
+    const char *fs = zero_shader_default_frag();
+    TEST_ASSERT(vs != NULL && strlen(vs) > 50, "Default vertex shader must be non-empty");
+    TEST_ASSERT(fs != NULL && strlen(fs) > 50, "Default fragment shader must be non-empty");
+    TEST_ASSERT(strstr(vs, "u_model") != NULL, "Vertex shader must contain u_model");
+    TEST_ASSERT(strstr(fs, "u_light_dir") != NULL, "Fragment shader must contain u_light_dir");
+}
+
 static void test_platform_headless(void) {
     ZeroPlatformConfig cfg = {
         .title = "Zero Engine Test",
@@ -141,16 +196,19 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("=== ZERO ENGINE: PHASE 1 VERIFICATION SUITE ===\n");
+    printf("=== ZERO ENGINE: PHASE 1 & PHASE 2 VERIFICATION SUITE ===\n");
     test_memory_arena();
     test_math_vectors_matrices();
     test_math_dual_quaternions();
+    test_procedural_meshes();
+    test_camera_system();
+    test_shader_definitions();
     test_platform_headless();
 
     if (run_windowed) {
         printf("Running windowed platform verification...\n");
         ZeroPlatformConfig cfg = {
-            .title = "Zero Engine Phase 1 Test",
+            .title = "Zero Engine Phase 2 Test",
             .width = 640,
             .height = 480,
             .headless = false

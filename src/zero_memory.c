@@ -55,11 +55,13 @@ void *zero_arena_alloc(ZeroArena *arena, size_t size, size_t alignment) {
 
     uintptr_t current_ptr = (uintptr_t)arena->buffer + arena->offset;
     uintptr_t aligned_ptr = ZERO_ALIGN_UP(current_ptr, alignment);
-    size_t new_offset = (aligned_ptr - (uintptr_t)arena->buffer) + size;
+    size_t aligned_offset = aligned_ptr - (uintptr_t)arena->buffer;
 
-    if (new_offset > arena->capacity) {
+    if (size > arena->capacity || aligned_offset > arena->capacity - size) {
         return NULL;
     }
+
+    size_t new_offset = aligned_offset + size;
 
     arena->offset = new_offset;
     void *ptr = (void *)aligned_ptr;
