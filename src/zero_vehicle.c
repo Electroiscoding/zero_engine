@@ -15,35 +15,36 @@ ZeroVehicle zero_vehicle_create(Vec3 spawn_pos) {
     car.inertia = vec3(1400.0f, 950.0f, 750.0f);
     car.inv_inertia = vec3(1.0f / 1400.0f, 1.0f / 950.0f, 1.0f / 750.0f);
 
-    float half_width = 0.78f;
-    float front_z = 1.45f;
-    float rear_z = -1.45f;
+    float half_width_f = 0.82f;
+    float half_width_r = 0.84f;
+    float front_z = 1.35f;
+    float rear_z = -1.30f;
 
-    // Wheel 0: Front-Left
-    car.wheels[0].hardpoint = vec3(-half_width, 0.0f, front_z);
+    // Wheel 0: Front-Left (-X)
+    car.wheels[0].hardpoint = vec3(-half_width_f, 0.0f, front_z);
     car.wheels[0].is_front = true;
     car.wheels[0].is_drive = false;
 
-    // Wheel 1: Front-Right
-    car.wheels[1].hardpoint = vec3(half_width, 0.0f, front_z);
+    // Wheel 1: Front-Right (+X)
+    car.wheels[1].hardpoint = vec3(half_width_f, 0.0f, front_z);
     car.wheels[1].is_front = true;
     car.wheels[1].is_drive = false;
 
-    // Wheel 2: Rear-Left
-    car.wheels[2].hardpoint = vec3(-half_width, 0.0f, rear_z);
+    // Wheel 2: Rear-Left (-X)
+    car.wheels[2].hardpoint = vec3(-half_width_r, 0.0f, rear_z);
     car.wheels[2].is_front = false;
     car.wheels[2].is_drive = true;
 
-    // Wheel 3: Rear-Right
-    car.wheels[3].hardpoint = vec3(half_width, 0.0f, rear_z);
+    // Wheel 3: Rear-Right (+X)
+    car.wheels[3].hardpoint = vec3(half_width_r, 0.0f, rear_z);
     car.wheels[3].is_front = false;
     car.wheels[3].is_drive = true;
 
     for (int i = 0; i < 4; ++i) {
         car.wheels[i].rest_length = 0.55f;
-        car.wheels[i].spring_stiffness = 38000.0f;
-        car.wheels[i].damping_rate = 3200.0f;
-        car.wheels[i].radius = 0.35f;
+        car.wheels[i].spring_stiffness = 40000.0f;
+        car.wheels[i].damping_rate = 3400.0f;
+        car.wheels[i].radius = 0.37f;
         car.wheels[i].current_length = 0.55f;
     }
 

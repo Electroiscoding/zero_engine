@@ -535,11 +535,11 @@ int main(void) {
         zero_mesh_draw(&shadow_quad);
         glDisable(GL_BLEND);
 
-        // 7. Render Sports Car Chassis (GTA-grade Cook-Torrance Italian Racing Red with clearcoat)
+        // 7. Render Tesla Roadster Chassis (Signature Metallic Multicoat Red with Clearcoat)
         zero_shader_set_mat4(&shader, "u_model", car.transform);
-        zero_shader_set_float(&shader, "u_roughness", 0.20f);
-        zero_shader_set_float(&shader, "u_metallic", 0.80f);
-        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.95f, 0.06f, 0.10f));
+        zero_shader_set_float(&shader, "u_roughness", 0.16f);
+        zero_shader_set_float(&shader, "u_metallic", 0.88f);
+        zero_shader_set_vec3(&shader, "u_object_color", vec3(0.82f, 0.04f, 0.08f));
         zero_shader_set_float(&shader, "u_material_mode", 0.0f);
         zero_mesh_draw(&car_mesh);
 
