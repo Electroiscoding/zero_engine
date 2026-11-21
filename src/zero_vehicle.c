@@ -72,7 +72,11 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
         Vec3 total_force = vec3(0.0f, -9.81f * car->mass, 0.0f);
         Vec3 total_torque = vec3(0.0f, 0.0f, 0.0f);
 
-        float max_steer = ZERO_DEG2RAD(38.0f);
+        float speed_kmh_approx = vec3_length(car->velocity) * 3.6f;
+        float speed_factor = speed_kmh_approx / 120.0f;
+        if (speed_factor > 1.0f) speed_factor = 1.0f;
+        float lock_degrees = 24.0f - speed_factor * 12.0f; // 24 deg at low speed, 12 deg at high speed
+        float max_steer = ZERO_DEG2RAD(lock_degrees);
         float current_steer = car->steer_input * max_steer;
 
         int grounded_wheels = 0;
@@ -198,10 +202,10 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
 
         car->position = vec3_add(car->position, vec3_scale(car->velocity, sub_dt));
 
-        // Direct Ackermann Yaw Steering Authority (turns exactly proportional to speed and steer input)
+        // Progressive Ackermann Yaw Steering Authority (smooth, stable handling curve)
         float wheelbase = 2.90f;
-        float target_yaw_rate = (v_forward / wheelbase) * tanf(current_steer);
-        float yaw_blend = car->handbrake ? 0.35f : 0.85f;
+        float target_yaw_rate = (v_forward / wheelbase) * tanf(current_steer) * 0.42f;
+        float yaw_blend = car->handbrake ? 0.35f : 0.45f;
         car->angular_velocity.y += (target_yaw_rate - car->angular_velocity.y) * yaw_blend;
 
         Vec3 ang_accel = vec3(

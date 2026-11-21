@@ -397,9 +397,15 @@ int main(void) {
 
         car.handbrake = platform.keys[' '];
 
-        // Immediate responsive steering response with speed sensitivity
-        float steer_speed = 12.0f * dt;
-        steer_smooth += (target_steer - steer_smooth) * steer_speed;
+        // Comfortable digital keyboard steering ramp (prevents abrupt jerking)
+        float steer_rate = 3.5f * dt;
+        if (target_steer > steer_smooth) {
+            steer_smooth += steer_rate;
+            if (steer_smooth > target_steer) steer_smooth = target_steer;
+        } else if (target_steer < steer_smooth) {
+            steer_smooth -= steer_rate;
+            if (steer_smooth < target_steer) steer_smooth = target_steer;
+        }
         car.steer_input = steer_smooth;
 
         car.throttle_input = target_throttle;
