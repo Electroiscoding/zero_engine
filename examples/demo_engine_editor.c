@@ -342,23 +342,23 @@ int main(void) {
         btn_x += 105.0f;
 
         // Play / Pause Simulation
-        const char *sim_txt = sim_running ? "❚❚ Pause" : "▶ Play";
-        if (zero_ui_button_toggle(&ui, btn_x, 4.0f, 75.0f, 24.0f, sim_txt, sim_running)) {
+        const char *sim_txt = sim_running ? "Pause" : "Play";
+        if (zero_ui_button_toggle(&ui, btn_x, 4.0f, 65.0f, 24.0f, sim_txt, sim_running)) {
             sim_running = !sim_running;
             studio_log(sim_running ? "Physics simulation resumed." : "Physics simulation paused.");
         }
-        btn_x += 80.0f;
+        btn_x += 70.0f;
 
         if (!sim_running) {
-            if (zero_ui_button(&ui, btn_x, 4.0f, 65.0f, 24.0f, "↻ Step")) {
+            if (zero_ui_button(&ui, btn_x, 4.0f, 55.0f, 24.0f, "Step")) {
                 step_one_frame = true;
                 studio_log("Stepped simulation 1 tick.");
             }
-            btn_x += 70.0f;
+            btn_x += 60.0f;
         }
 
         // Reset Scene
-        if (zero_ui_button(&ui, btn_x, 4.0f, 70.0f, 24.0f, "⟲ Reset") || platform.keys['r'] || platform.keys['R']) {
+        if (zero_ui_button(&ui, btn_x, 4.0f, 60.0f, 24.0f, "Reset") || platform.keys['r'] || platform.keys['R']) {
             platform.keys['r'] = false;
             platform.keys['R'] = false;
             zero_scene_destroy(scene);
@@ -379,10 +379,10 @@ int main(void) {
             selected_entity_id = -1;
             studio_log("Reset scene to clean project template.");
         }
-        btn_x += 75.0f;
+        btn_x += 65.0f;
 
         // Cycle Sky Lighting
-        if (zero_ui_button(&ui, btn_x, 4.0f, 75.0f, 24.0f, "☀ Sky") || platform.keys['4']) {
+        if (zero_ui_button(&ui, btn_x, 4.0f, 50.0f, 24.0f, "Sky") || platform.keys['4']) {
             platform.keys['4'] = false;
             time_of_day += 25.0f;
             if (time_of_day > 120.0f) time_of_day = 0.0f;
@@ -394,10 +394,10 @@ int main(void) {
             snprintf(buf, sizeof(buf), "Sun Diurnal Cycle: %.1fs | Solar Phase: %s", time_of_day, phase_names[phase]);
             studio_log(buf);
         }
-        btn_x += 80.0f;
+        btn_x += 55.0f;
 
         // AI Perception Inspect
-        if (zero_ui_button(&ui, btn_x, 4.0f, 90.0f, 24.0f, "👁 AI JSON") || platform.keys['t'] || platform.keys['T']) {
+        if (zero_ui_button(&ui, btn_x, 4.0f, 75.0f, 24.0f, "AI JSON") || platform.keys['t'] || platform.keys['T']) {
             platform.keys['t'] = false;
             platform.keys['T'] = false;
             char json_buf[2048];
@@ -457,12 +457,12 @@ int main(void) {
             zero_ui_draw_text(&ui, ins_x + 10.0f, py, header_str, vec4(0.95f, 0.95f, 1.0f, 1.0f), 1.0f);
             py += 24.0f;
 
-            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "--- TRANSFORM ---", vec4(0.55f, 0.65f, 0.85f, 1.0f), 0.9f);
+            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "[ TRANSFORM ]", vec4(0.55f, 0.75f, 0.95f, 1.0f), 1.0f);
             py += 20.0f;
 
             char pos_str[64];
             snprintf(pos_str, sizeof(pos_str), "Pos: (%.2f, %.2f, %.2f)", sel->world_pos.x, sel->world_pos.y, sel->world_pos.z);
-            zero_ui_draw_text(&ui, ins_x + 10.0f, py, pos_str, vec4(0.85f, 0.88f, 0.92f, 1.0f), 0.9f);
+            zero_ui_draw_text(&ui, ins_x + 10.0f, py, pos_str, vec4(0.85f, 0.88f, 0.92f, 1.0f), 1.0f);
             py += 20.0f;
 
             // Transform Nudge Buttons
@@ -493,7 +493,7 @@ int main(void) {
             py += 28.0f;
 
             // Material Color Preset Buttons & Swatch
-            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "--- MATERIAL COLOR ---", vec4(0.55f, 0.65f, 0.85f, 1.0f), 0.9f);
+            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "[ MATERIAL COLOR ]", vec4(0.55f, 0.75f, 0.95f, 1.0f), 1.0f);
             py += 20.0f;
 
             // Color swatch preview box
@@ -507,7 +507,7 @@ int main(void) {
             py += 32.0f;
 
             // XPBD Physics Body info
-            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "--- XPBD RIGID BODY ---", vec4(0.55f, 0.65f, 0.85f, 1.0f), 0.9f);
+            zero_ui_draw_text(&ui, ins_x + 10.0f, py, "[ XPBD RIGID BODY ]", vec4(0.55f, 0.75f, 0.95f, 1.0f), 1.0f);
             py += 20.0f;
 
             if (sel->rigid_body_id > 0 && scene->physics) {
@@ -515,8 +515,8 @@ int main(void) {
                 if (b_idx < (uint32_t)scene->physics->body_count) {
                     ZeroRigidBody *b = &scene->physics->bodies[b_idx];
                     char rb_str[64];
-                    snprintf(rb_str, sizeof(rb_str), "Mass: %.1f kg | Restitution: %.2f", b->mass, b->restitution);
-                    zero_ui_draw_text(&ui, ins_x + 10.0f, py, rb_str, vec4(0.85f, 0.88f, 0.92f, 1.0f), 0.85f);
+                    snprintf(rb_str, sizeof(rb_str), "Mass: %.1f kg | Rest: %.2f", b->mass, b->restitution);
+                    zero_ui_draw_text(&ui, ins_x + 10.0f, py, rb_str, vec4(0.85f, 0.88f, 0.92f, 1.0f), 1.0f);
                     py += 24.0f;
 
                     // Sliders
@@ -534,7 +534,7 @@ int main(void) {
                     py += 28.0f;
                 }
             } else {
-                zero_ui_draw_text(&ui, ins_x + 10.0f, py, "No active rigid body collider.", vec4(0.6f, 0.6f, 0.7f, 1.0f), 0.85f);
+                zero_ui_draw_text(&ui, ins_x + 10.0f, py, "No active rigid body collider.", vec4(0.6f, 0.6f, 0.7f, 1.0f), 1.0f);
                 py += 24.0f;
             }
 
@@ -549,9 +549,9 @@ int main(void) {
             }
         } else {
             zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 40.0f, "No entity selected.", vec4(0.7f, 0.75f, 0.85f, 1.0f), 1.0f);
-            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 65.0f, "Click an item in the", vec4(0.55f, 0.58f, 0.65f, 1.0f), 0.9f);
-            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 85.0f, "Hierarchy panel to", vec4(0.55f, 0.58f, 0.65f, 1.0f), 0.9f);
-            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 105.0f, "inspect its properties.", vec4(0.55f, 0.58f, 0.65f, 1.0f), 0.9f);
+            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 65.0f, "Click an item in the", vec4(0.55f, 0.58f, 0.65f, 1.0f), 1.0f);
+            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 85.0f, "Hierarchy panel to", vec4(0.55f, 0.58f, 0.65f, 1.0f), 1.0f);
+            zero_ui_draw_text(&ui, ins_x + 12.0f, ins_y + 105.0f, "inspect its properties.", vec4(0.55f, 0.58f, 0.65f, 1.0f), 1.0f);
         }
 
         // --------------------------------------------------------------------
@@ -576,20 +576,20 @@ int main(void) {
                  sim_running ? "RUNNING (XPBD 60Hz)" : "PAUSED",
                  (unsigned long long)scene->tick, scene->time);
 
-        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y, stat1, vec4(0.25f, 0.85f, 0.95f, 1.0f), 0.9f);
-        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y + 20.0f, stat2, vec4(0.85f, 0.88f, 0.95f, 1.0f), 0.85f);
-        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y + 40.0f, stat3, vec4(0.85f, 0.88f, 0.95f, 1.0f), 0.85f);
+        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y, stat1, vec4(0.25f, 0.85f, 0.95f, 1.0f), 1.0f);
+        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y + 20.0f, stat2, vec4(0.85f, 0.88f, 0.95f, 1.0f), 1.0f);
+        zero_ui_draw_text(&ui, c_x + 12.0f, stat_y + 40.0f, stat3, vec4(0.85f, 0.88f, 0.95f, 1.0f), 1.0f);
 
         // Event Log Window Right Box
         float log_x = c_x + 480.0f;
         float log_y = c_y + 30.0f;
-        zero_ui_draw_text(&ui, log_x, log_y, "[EVENT LOG]", vec4(0.95f, 0.8f, 0.2f, 1.0f), 0.85f);
+        zero_ui_draw_text(&ui, log_x, log_y, "[EVENT LOG]", vec4(0.95f, 0.8f, 0.2f, 1.0f), 1.0f);
         log_y += 18.0f;
 
         for (int l = 0; l < 4; ++l) {
             int idx = (g_log_head - 1 - l + MAX_LOG_LINES) % MAX_LOG_LINES;
             if (g_log_lines[idx][0] != '\0') {
-                zero_ui_draw_text(&ui, log_x, log_y, g_log_lines[idx], vec4(0.80f, 0.82f, 0.88f, 1.0f), 0.85f);
+                zero_ui_draw_text(&ui, log_x, log_y, g_log_lines[idx], vec4(0.80f, 0.82f, 0.88f, 1.0f), 1.0f);
                 log_y += 18.0f;
             }
         }

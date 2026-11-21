@@ -41,6 +41,7 @@ typedef ptrdiff_t GLintptr;
 #define GL_RED 0x1903
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
+#define GL_UNPACK_ALIGNMENT 0x0CF5
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE_MAG_FILTER 0x2800
 #define GL_TEXTURE_MIN_FILTER 0x2801
@@ -177,6 +178,7 @@ extern void glBlendFunc(GLenum sfactor, GLenum dfactor);
 extern void glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
 extern void glDrawArrays(GLenum mode, GLint first, GLsizei count);
 extern void glDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid *indices);
+extern void glPixelStorei(GLenum pname, GLint param);
 
 extern void glGenTextures(GLsizei n, GLuint *textures);
 extern void glBindTexture(GLenum target, GLuint texture);

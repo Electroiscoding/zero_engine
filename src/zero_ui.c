@@ -97,6 +97,7 @@ bool zero_ui_init(ZeroUI *ui) {
 
     glGenTextures(1, &ui->font_tex);
     glBindTexture(GL_TEXTURE_2D, ui->font_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 128, 128, 0, GL_RED, GL_UNSIGNED_BYTE, zero_font_atlas);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -196,20 +197,21 @@ void zero_ui_draw_rect_outline(ZeroUI *ui, float x, float y, float w, float h, V
 
 void zero_ui_draw_text(ZeroUI *ui, float x, float y, const char *text, Vec4 color, float scale) {
     if (!ui || !text || scale <= 0.0f) return;
-    float cur_x = x;
-    float cur_y = y;
-    float gw = 8.0f * scale;
-    float gh = 16.0f * scale;
+    float cur_x = floorf(x);
+    float cur_y = floorf(y);
+    float char_adv = floorf(7.0f * scale);
+    float glyph_w = floorf(8.0f * scale);
+    float glyph_h = floorf(16.0f * scale);
 
     for (const char *p = text; *p; ++p) {
         char c = *p;
         if (c == '\n') {
-            cur_x = x;
-            cur_y += gh;
+            cur_x = floorf(x);
+            cur_y += glyph_h;
             continue;
         }
-        if ((unsigned char)c < 32 || (unsigned char)c > 127) {
-            c = '?';
+        if ((unsigned char)c < 32 || (unsigned char)c > 126) {
+            c = ' ';
         }
         uint32_t idx = (uint32_t)((unsigned char)c - 32);
         uint32_t col = idx % 16;
@@ -221,9 +223,9 @@ void zero_ui_draw_text(ZeroUI *ui, float x, float y, const char *text, Vec4 colo
         float v1 = (float)((row + 1) * 16) / 128.0f;
 
         Vec2 p0 = vec2(cur_x, cur_y);
-        Vec2 p1 = vec2(cur_x + gw, cur_y);
-        Vec2 p2 = vec2(cur_x + gw, cur_y + gh);
-        Vec2 p3 = vec2(cur_x, cur_y + gh);
+        Vec2 p1 = vec2(cur_x + glyph_w, cur_y);
+        Vec2 p2 = vec2(cur_x + glyph_w, cur_y + glyph_h);
+        Vec2 p3 = vec2(cur_x, cur_y + glyph_h);
 
         Vec2 uv0 = vec2(u0, v0);
         Vec2 uv1 = vec2(u1, v0);
@@ -231,7 +233,7 @@ void zero_ui_draw_text(ZeroUI *ui, float x, float y, const char *text, Vec4 colo
         Vec2 uv3 = vec2(u0, v1);
 
         push_quad(ui, p0, p1, p2, p3, uv0, uv1, uv2, uv3, color, 1.0f);
-        cur_x += gw;
+        cur_x += char_adv;
     }
 }
 
@@ -263,10 +265,10 @@ bool zero_ui_button(ZeroUI *ui, float x, float y, float w, float h, const char *
 
     if (label) {
         size_t len = strlen(label);
-        float tw = (float)len * 8.0f;
+        float tw = (float)len * 7.0f;
         float th = 16.0f;
-        float tx = x + (w - tw) * 0.5f;
-        float ty = y + (h - th) * 0.5f;
+        float tx = floorf(x + (w - tw) * 0.5f);
+        float ty = floorf(y + (h - th) * 0.5f);
         zero_ui_draw_text(ui, tx, ty, label, text_col, 1.0f);
     }
 
@@ -291,10 +293,10 @@ bool zero_ui_button_toggle(ZeroUI *ui, float x, float y, float w, float h, const
 
     if (label) {
         size_t len = strlen(label);
-        float tw = (float)len * 8.0f;
+        float tw = (float)len * 7.0f;
         float th = 16.0f;
-        float tx = x + (w - tw) * 0.5f;
-        float ty = y + (h - th) * 0.5f;
+        float tx = floorf(x + (w - tw) * 0.5f);
+        float ty = floorf(y + (h - th) * 0.5f);
         zero_ui_draw_text(ui, tx, ty, label, text_col, 1.0f);
     }
 
@@ -321,7 +323,7 @@ bool zero_ui_menu_item(ZeroUI *ui, float x, float y, float w, float h, const cha
     }
 
     if (label) {
-        zero_ui_draw_text(ui, x + 8.0f, y + (h - 16.0f) * 0.5f, label, text_col, 1.0f);
+        zero_ui_draw_text(ui, x + 8.0f, floorf(y + (h - 16.0f) * 0.5f), label, text_col, 1.0f);
     }
 
     return (hovered && ui->mouse_clicked);
