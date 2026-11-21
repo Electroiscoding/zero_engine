@@ -15,6 +15,7 @@
 #include "zero_sky.h"
 #include "zero_scene.h"
 #include "zero_inspect.h"
+#include "zero_ui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -541,6 +542,46 @@ static void test_inspect_headless_perception(void) {
     zero_scene_destroy(scene);
 }
 
+static void test_ui_system(void) {
+    ZeroUI ui;
+    bool ok = zero_ui_init(&ui);
+    TEST_ASSERT(ok, "ZeroUI initialization succeeds");
+    TEST_ASSERT(ui.vertices != NULL, "UI vertex buffer allocated");
+    TEST_ASSERT(ui.indices != NULL, "UI index buffer allocated");
+
+    // Begin frame
+    zero_ui_begin(&ui, 1280, 720, 100, 100, false);
+    TEST_ASSERT(ui.vertex_count == 0, "Initial vertex count is 0");
+    TEST_ASSERT(ui.index_count == 0, "Initial index count is 0");
+
+    // Rect draw
+    zero_ui_draw_rect(&ui, 10, 10, 200, 100, vec4(1, 1, 1, 1));
+    TEST_ASSERT(ui.vertex_count == 4, "Rect pushes 4 vertices");
+    TEST_ASSERT(ui.index_count == 6, "Rect pushes 6 indices");
+
+    // Text draw
+    zero_ui_draw_text(&ui, 20, 20, "Hello", vec4(1, 1, 1, 1), 1.0f);
+    TEST_ASSERT(ui.vertex_count == 4 + 5 * 4, "5 characters push 20 vertices");
+
+    // Interactive button (mouse at 100, 100, button at 50, 50, 100, 60 -> hovered)
+    bool clicked = zero_ui_button(&ui, 50, 50, 100, 60, "Click Me");
+    TEST_ASSERT(ui.mouse_over_ui == true, "Hovered button marks mouse_over_ui");
+    TEST_ASSERT(!clicked, "Not clicked when mouse_down is false");
+
+    // Slider
+    float val = 5.0f;
+    zero_ui_slider(&ui, 50, 200, 100, 20, "Mass", &val, 0.0f, 10.0f);
+    TEST_ASSERT(val == 5.0f, "Slider value remains unchanged without drag");
+
+    // Panel
+    zero_ui_panel(&ui, 300, 100, 200, 300, "Hierarchy");
+    TEST_ASSERT(ui.vertex_count > 0, "Panel produces geometry");
+
+    zero_ui_end(&ui);
+    zero_ui_shutdown(&ui);
+    TEST_ASSERT(ui.vertices == NULL, "Vertices freed on shutdown");
+}
+
 int main(int argc, char **argv) {
     bool run_windowed = false;
     for (int i = 1; i < argc; ++i) {
@@ -569,6 +610,7 @@ int main(int argc, char **argv) {
     test_sky_atmosphere_scattering();
     test_scene_graph_hierarchy();
     test_inspect_headless_perception();
+    test_ui_system();
 
     if (run_windowed) {
         printf("Running windowed platform verification...\n");

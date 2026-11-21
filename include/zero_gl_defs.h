@@ -38,6 +38,7 @@ typedef ptrdiff_t GLintptr;
 #define GL_UNSIGNED_BYTE 0x1401
 #define GL_UNSIGNED_INT 0x1405
 #define GL_FLOAT 0x1406
+#define GL_RED 0x1903
 #define GL_RGB 0x1907
 #define GL_RGBA 0x1908
 #define GL_TEXTURE_2D 0x0DE1
