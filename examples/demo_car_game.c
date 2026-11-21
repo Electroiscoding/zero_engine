@@ -429,11 +429,9 @@ int main(void) {
 
         if (cockpit_view) {
             cam.position = vec3_add(car.position, vec3_add(vec3_scale(car_fwd, 0.35f), vec3_scale(car_up, 1.05f)));
-            Vec3 target = vec3_add(cam.position, car_fwd);
             cam.forward = car_fwd;
-            cam.up = car_up;
-            cam.right = vec3_normalize(vec3_cross(car_fwd, car_up));
-            (void)target;
+            cam.right = vec3_normalize(vec3_cross(car_up, car_fwd));
+            cam.up = vec3_normalize(vec3_cross(cam.forward, cam.right));
         } else {
             Vec3 desired_cam = vec3_sub(
                 vec3_add(car.position, vec3(0.0f, 2.5f, 0.0f)),
@@ -446,8 +444,8 @@ int main(void) {
 
             Vec3 look_target = vec3_add(car.position, vec3(0.0f, 0.9f, 0.0f));
             cam.forward = vec3_normalize(vec3_sub(look_target, cam.position));
-            cam.right = vec3_normalize(vec3_cross(cam.forward, vec3(0.0f, 1.0f, 0.0f)));
-            cam.up = vec3_normalize(vec3_cross(cam.right, cam.forward));
+            cam.right = vec3_normalize(vec3_cross(vec3(0.0f, 1.0f, 0.0f), cam.forward));
+            cam.up = vec3_normalize(vec3_cross(cam.forward, cam.right));
         }
 
         // 3D Rendering Pass
@@ -461,7 +459,12 @@ int main(void) {
         zero_shader_set_float(&shader, "u_is_hud", 0.0f);
         zero_shader_set_float(&shader, "u_time", (float)current_time);
 
-        Mat4 view = zero_camera_get_view(&cam);
+        Mat4 view = mat4_identity();
+        view.m[0] = cam.right.x;  view.m[4] = cam.right.y;  view.m[8] = cam.right.z;  view.m[12] = -vec3_dot(cam.right, cam.position);
+        view.m[1] = cam.up.x;     view.m[5] = cam.up.y;     view.m[9] = cam.up.z;     view.m[13] = -vec3_dot(cam.up, cam.position);
+        view.m[2] = -cam.forward.x; view.m[6] = -cam.forward.y; view.m[10] = -cam.forward.z; view.m[14] = vec3_dot(cam.forward, cam.position);
+        view.m[15] = 1.0f;
+
         Mat4 proj = zero_camera_get_projection(&cam);
         zero_shader_set_mat4(&shader, "u_view", view);
         zero_shader_set_mat4(&shader, "u_proj", proj);
