@@ -77,6 +77,8 @@ void zero_vehicle_enhanced_update(ZeroVehicleEnhanced *car, float dt, ZeroGround
 #endif // ZERO_VEHICLE_PHYSICS_H
 #endif // __has_include("zero_vehicle_physics.h")
 
+#include "zero_ai_models.h"
+
 #define ZERO_RACE_CAR_COUNT 4
 
 typedef struct ZeroAIController {
@@ -90,6 +92,11 @@ typedef struct ZeroAIController {
     float smooth_steer;             // Filtered steering angle
     float smooth_throttle;          // Filtered throttle
     float smooth_brake;             // Filtered brake
+    ZeroAIPersonality personality;  // Driver personality (Apex Predator, Precision, Drift)
+    const ZeroNeuralNet *nn_model;  // Neural network weights for personality
+    float last_observations[ZERO_NN_INPUT_DIM]; // Live 16-D feature observations
+    float last_nn_outputs[ZERO_NN_OUTPUT_DIM];   // Output predictions [steer, throttle, brake]
+    bool use_neural_net;            // Toggle neural network inference
 } ZeroAIController;
 
 #define ZERO_MAX_COLLISION_EVENTS 16
@@ -119,7 +126,9 @@ typedef struct ZeroRaceGame {
 
 // Core Function Prototypes
 ZeroAIController zero_ai_controller_create(uint32_t car_index, float aggressiveness, float preferred_offset);
+ZeroAIController zero_ai_controller_create_nn(uint32_t car_index, ZeroAIPersonality personality);
 void zero_ai_controller_update(ZeroAIController *ai, ZeroRaceGame *game, float dt);
+void zero_ai_extract_observations(const ZeroVehicleEnhanced *car, const ZeroRaceGame *game, float out_obs[ZERO_NN_INPUT_DIM]);
 
 float zero_track_get_spline_curvature(int node_idx);
 float zero_track_get_max_corner_speed(int node_idx, float aggressiveness);

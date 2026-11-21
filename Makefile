@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -Iinclude -D_POSIX_C_SOURCE=199309L
 LDFLAGS ?= -lX11 -l:libGL.so.1 -lm -lpthread
 
-SRC = src/zero_memory.c src/zero_platform.c src/zero_gl_loader.c src/zero_shader.c src/zero_mesh.c src/zero_camera.c src/zero_image.c src/zero_obj.c src/zero_zmesh.c src/zero_vehicle.c src/zero_physics.c src/zero_csm.c src/zero_sky.c src/zero_scene.c src/zero_inspect.c src/zero_ui.c src/zero_audio.c src/zero_race_camera.c src/zero_race_ui.c src/zero_track_mesh.c src/zero_vehicle_physics.c src/zero_ai_racers.c
+SRC = src/zero_memory.c src/zero_platform.c src/zero_gl_loader.c src/zero_shader.c src/zero_mesh.c src/zero_camera.c src/zero_image.c src/zero_obj.c src/zero_zmesh.c src/zero_vehicle.c src/zero_physics.c src/zero_csm.c src/zero_sky.c src/zero_scene.c src/zero_inspect.c src/zero_ui.c src/zero_audio.c src/zero_race_camera.c src/zero_race_ui.c src/zero_track_mesh.c src/zero_vehicle_physics.c src/zero_ai_racers.c src/zero_ai_nn.c
 OBJ = $(SRC:src/%.c=build/%.o)
 TEST_SRC = tests/test_zero_engine.c
 TEST_BIN = build/test_zero_engine
@@ -10,13 +10,17 @@ TEST_RACE_SRC = tests/test_race_integration.c
 TEST_RACE_BIN = build/test_race_integration
 TEST_COLLISION_SRC = tests/test_race_collision.c
 TEST_COLLISION_BIN = build/test_race_collision
+TEST_AI_NN_SRC = tests/test_ai_nn.c
+TEST_AI_NN_BIN = build/test_ai_nn
+TRAIN_AI_SRC = tools/train_ai_racers.c
+TRAIN_AI_BIN = build/train_ai_racers
 DEMO_BIN = build/demo_3d_viewport
 CAR_BIN = build/demo_car_game
 STUDIO_BIN = build/demo_engine_editor
 RACE_BIN = build/demo_race_game
 LIB = build/libzero_engine.a
 
-.PHONY: all clean test demo car_game studio race_game test_race test_collision
+.PHONY: all clean test demo car_game studio race_game test_race test_collision test_ai_nn train_ai
 
 all: $(LIB) $(TEST_BIN) $(DEMO_BIN) $(CAR_BIN) $(STUDIO_BIN)
 
@@ -50,6 +54,12 @@ $(TEST_RACE_BIN): $(TEST_RACE_SRC) $(LIB) | build
 $(TEST_COLLISION_BIN): $(TEST_COLLISION_SRC) $(LIB) | build
 	$(CC) $(CFLAGS) $(TEST_COLLISION_SRC) $(LIB) $(LDFLAGS) -o $@
 
+$(TEST_AI_NN_BIN): $(TEST_AI_NN_SRC) $(LIB) | build
+	$(CC) $(CFLAGS) $(TEST_AI_NN_SRC) $(LIB) $(LDFLAGS) -o $@
+
+$(TRAIN_AI_BIN): $(TRAIN_AI_SRC) $(LIB) | build
+	$(CC) $(CFLAGS) $(TRAIN_AI_SRC) $(LIB) $(LDFLAGS) -o $@
+
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
@@ -58,6 +68,12 @@ test_race: $(TEST_RACE_BIN)
 
 test_collision: $(TEST_COLLISION_BIN)
 	./$(TEST_COLLISION_BIN)
+
+test_ai_nn: $(TEST_AI_NN_BIN)
+	./$(TEST_AI_NN_BIN)
+
+train_ai: $(TRAIN_AI_BIN)
+	./$(TRAIN_AI_BIN)
 
 demo: $(DEMO_BIN)
 	./$(DEMO_BIN)

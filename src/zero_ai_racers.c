@@ -76,19 +76,13 @@ static void init_spline_tables_once(void) {
         // Max cornering speed with baseline aggressiveness = 1.0f
         const float mu = 1.45f;
         const float g = 9.81f;
-        const float rho = 1.225f;
-        const float cl_a = 2.53f;
-        const float m = 1150.0f;
 
         if (curvature < 0.0005f) {
             s_max_corner_speeds[i] = 75.0f; // Straight: max top speed 270 km/h
         } else {
             float r = 1.0f / curvature;
-            float k_aero = 0.5f * mu * rho * cl_a / m;
-            float denom = 1.0f - k_aero * r;
-            if (denom < 0.15f) denom = 0.15f;
-            float v_corner = sqrtf((mu * g * r) / denom);
-            if (v_corner < 14.0f) v_corner = 14.0f;
+            float v_corner = sqrtf(mu * g * r * 0.68f);
+            if (v_corner < 15.0f) v_corner = 15.0f;
             if (v_corner > 75.0f) v_corner = 75.0f;
             s_max_corner_speeds[i] = v_corner;
         }
@@ -197,15 +191,98 @@ void zero_track_find_nearest_segment(Vec3 pos, int *out_node_idx, float *out_t, 
 // Autonomous AI Opponent Controller
 // -----------------------------------------------------------------------------
 
-ZeroAIController zero_ai_controller_create(uint32_t car_index, float aggressiveness, float preferred_offset) {
+void zero_ai_extract_observations(const ZeroVehicleEnhanced *car, const ZeroRaceGame *game, float out_obs[ZERO_NN_INPUT_DIM]) {
+    if (!car || !out_obs) return;
+    init_spline_tables_once();
+
+    float spd = vec3_length(car->velocity);
+    Mat4 rot = quat_to_mat4(car->orientation);
+    Vec3 fwd = vec3(rot.m[8], rot.m[9], rot.m[10]);
+    Vec3 right = vec3(rot.m[0], rot.m[1], rot.m[2]);
+
+    float v_fwd = vec3_dot(car->velocity, fwd);
+    float v_lat = vec3_dot(car->velocity, right);
+
+    int seg = 0;
+    float seg_t = 0.0f;
+    float dist_sq = 0.0f;
+    zero_track_find_nearest_segment(car->position, &seg, &seg_t, &dist_sq);
+    float lat_dist = sqrtf(dist_sq);
+
+    int next_seg = (seg + 1) % ZERO_TRACK_SPLINE_COUNT;
+    float tx = g_track_spline[next_seg][0] - g_track_spline[seg][0];
+    float tz = g_track_spline[next_seg][1] - g_track_spline[seg][1];
+    float spline_yaw = atan2f(tx, tz);
+
+    float car_yaw = atan2f(fwd.x, fwd.z);
+    float heading_err = car_yaw - spline_yaw;
+    while (heading_err > ZERO_PI) heading_err -= 2.0f * ZERO_PI;
+    while (heading_err < -ZERO_PI) heading_err += 2.0f * ZERO_PI;
+
+    float c0 = zero_track_get_spline_curvature(seg);
+    float c10 = zero_track_get_spline_curvature((seg + 2) % ZERO_TRACK_SPLINE_COUNT);
+    float c25 = zero_track_get_spline_curvature((seg + 5) % ZERO_TRACK_SPLINE_COUNT);
+    float c45 = zero_track_get_spline_curvature((seg + 9) % ZERO_TRACK_SPLINE_COUNT);
+
+    out_obs[0] = spd / 75.0f;
+    out_obs[1] = v_fwd / 75.0f;
+    out_obs[2] = v_lat / 20.0f;
+    out_obs[3] = car->angular_velocity.y / 4.0f;
+    out_obs[4] = car->drift_angle / 45.0f;
+    out_obs[5] = lat_dist / 7.0f;
+    out_obs[6] = heading_err / ZERO_PI;
+    out_obs[7] = c0 * 40.0f;
+    out_obs[8] = c10 * 40.0f;
+    out_obs[9] = c25 * 40.0f;
+    out_obs[10] = c45 * 40.0f;
+    out_obs[11] = (ZERO_TRACK_BARRIER_DIST - lat_dist) / ZERO_TRACK_BARRIER_DIST;
+
+    float front_dist = 30.0f;
+    float rel_closing = 0.0f;
+    float left_prox = 0.0f;
+    float right_prox = 0.0f;
+
+    if (game) {
+        for (uint32_t j = 0; j < ZERO_RACE_CAR_COUNT; ++j) {
+            const ZeroVehicleEnhanced *other = &game->cars[j];
+            if (other == car) continue;
+            Vec3 d = vec3_sub(other->position, car->position);
+            float z_rel = vec3_dot(d, fwd);
+            float x_rel = vec3_dot(d, right);
+
+            if (z_rel > 0.5f && z_rel < 30.0f && fabsf(x_rel) < 3.5f) {
+                if (z_rel < front_dist) {
+                    front_dist = z_rel;
+                    float other_fwd_v = vec3_dot(other->velocity, fwd);
+                    rel_closing = v_fwd - other_fwd_v;
+                }
+            } else if (fabsf(z_rel) < 4.0f) {
+                if (x_rel < -0.8f && x_rel > -4.0f) left_prox = 1.0f;
+                else if (x_rel > 0.8f && x_rel < 4.0f) right_prox = 1.0f;
+            }
+        }
+    }
+
+    out_obs[12] = front_dist / 30.0f;
+    out_obs[13] = rel_closing / 20.0f;
+    out_obs[14] = left_prox;
+    out_obs[15] = right_prox;
+}
+
+ZeroAIController zero_ai_controller_create_nn(uint32_t car_index, ZeroAIPersonality personality) {
     init_spline_tables_once();
 
     ZeroAIController ai;
     memset(&ai, 0, sizeof(ai));
     ai.car_index = car_index;
-    ai.aggressiveness = aggressiveness;
-    ai.preferred_lateral_offset = preferred_offset;
-    ai.current_lateral_offset = preferred_offset;
+    ai.personality = personality;
+    ai.nn_model = zero_ai_get_model(personality);
+    ai.use_neural_net = true;
+    ai.aggressiveness = (personality == ZERO_AI_APEX_PREDATOR) ? 1.05f :
+                        (personality == ZERO_AI_DRIFT_KING) ? 1.00f : 0.82f;
+    ai.preferred_lateral_offset = (personality == ZERO_AI_APEX_PREDATOR) ? 1.5f :
+                                  (personality == ZERO_AI_DRIFT_KING) ? -1.5f : 0.0f;
+    ai.current_lateral_offset = ai.preferred_lateral_offset;
     ai.lookahead_distance = 12.0f;
     ai.target_spline_node = 0;
     ai.avoidance_timer = 0.0f;
@@ -215,13 +292,31 @@ ZeroAIController zero_ai_controller_create(uint32_t car_index, float aggressiven
     return ai;
 }
 
+ZeroAIController zero_ai_controller_create(uint32_t car_index, float aggressiveness, float preferred_offset) {
+    ZeroAIPersonality p = (car_index == 1) ? ZERO_AI_APEX_PREDATOR :
+                          (car_index == 2) ? ZERO_AI_PRECISION_MASTER :
+                          (car_index == 3) ? ZERO_AI_DRIFT_KING : ZERO_AI_PRECISION_MASTER;
+    ZeroAIController ai = zero_ai_controller_create_nn(car_index, p);
+    ai.aggressiveness = aggressiveness;
+    ai.preferred_lateral_offset = preferred_offset;
+    ai.current_lateral_offset = preferred_offset;
+    return ai;
+}
+
 void zero_ai_controller_update(ZeroAIController *ai, ZeroRaceGame *game, float dt) {
     if (!ai || !game || ai->car_index >= ZERO_RACE_CAR_COUNT || dt <= 0.0f) return;
     init_spline_tables_once();
 
     ZeroVehicleEnhanced *car = &game->cars[ai->car_index];
-    float v = vec3_length(car->velocity);
 
+    // Extract real-time 16-D observation vector
+    zero_ai_extract_observations(car, game, ai->last_observations);
+
+    if (ai->use_neural_net && ai->nn_model) {
+        zero_nn_forward(ai->nn_model, ai->last_observations, ai->last_nn_outputs);
+    }
+
+    float v = vec3_length(car->velocity);
     Mat4 rot_mat = quat_to_mat4(car->orientation);
     Vec3 car_right = vec3(rot_mat.m[0], rot_mat.m[1], rot_mat.m[2]);
     Vec3 car_fwd = vec3(rot_mat.m[8], rot_mat.m[9], rot_mat.m[10]);
@@ -306,9 +401,6 @@ void zero_ai_controller_update(ZeroAIController *ai, ZeroRaceGame *game, float d
     if (raw_steer_input < -1.0f) raw_steer_input = -1.0f;
     if (raw_steer_input > 1.0f) raw_steer_input = 1.0f;
 
-    ai->smooth_steer += (raw_steer_input - ai->smooth_steer) * fminf(1.0f, dt * 14.0f);
-    car->steer_input = ai->smooth_steer;
-
     // 3. Anticipatory corner braking
     const float a_brake = 8.5f;
     float d_brake_lookahead = 20.0f + (v * v) / (2.0f * a_brake) + 1.0f * v;
@@ -350,11 +442,83 @@ void zero_ai_controller_update(ZeroAIController *ai, ZeroRaceGame *game, float d
         raw_throttle = 0.0f;
     }
 
-    ai->smooth_throttle += (raw_throttle - ai->smooth_throttle) * fminf(1.0f, dt * 10.0f);
-    ai->smooth_brake += (raw_brake - ai->smooth_brake) * fminf(1.0f, dt * 14.0f);
+    float steer_target = raw_steer_input;
+    float throttle_target = raw_throttle;
+    float brake_target = raw_brake;
+    bool handbrake_target = false;
+
+    if (ai->use_neural_net && ai->nn_model) {
+        float nn_steer = ai->last_nn_outputs[0];
+        float nn_thr = ai->last_nn_outputs[1];
+        float nn_brk = ai->last_nn_outputs[2];
+
+        float net_nn_thr = 0.0f;
+        float net_nn_brk = 0.0f;
+        if (nn_thr > nn_brk) {
+            net_nn_thr = nn_thr - nn_brk * 0.5f;
+            net_nn_brk = 0.0f;
+        } else {
+            net_nn_brk = nn_brk - nn_thr * 0.5f;
+            net_nn_thr = 0.0f;
+        }
+
+        float current_dist = sqrtf(dist_sq);
+        float steer_blend = 0.18f;
+        float thr_blend = 0.60f;
+        float brk_blend = 0.60f;
+
+        if (ai->personality == ZERO_AI_APEX_PREDATOR) {
+            steer_blend = 0.25f;
+            thr_blend = 0.75f;
+            brk_blend = 0.65f;
+        } else if (ai->personality == ZERO_AI_PRECISION_MASTER) {
+            steer_blend = 0.05f;
+            thr_blend = 0.50f;
+            brk_blend = 0.50f;
+        } else if (ai->personality == ZERO_AI_DRIFT_KING) {
+            steer_blend = 0.35f;
+            thr_blend = 0.75f;
+            brk_blend = 0.65f;
+
+            float corner_curvature = zero_track_get_spline_curvature(seg_idx);
+            if (v > 16.0f && current_dist < 9.2f && (fabsf(raw_steer_input) > 0.25f || corner_curvature > 0.016f) &&
+                car->drift_angle < 12.0f) {
+                handbrake_target = true;
+            }
+        }
+
+        if (current_dist > 9.5f) {
+            steer_blend = 0.0f;
+        }
+
+        if (raw_brake > 0.0f) {
+            throttle_target = 0.0f;
+            brake_target = (1.0f - brk_blend) * raw_brake + brk_blend * net_nn_brk;
+            if (brake_target < 0.2f) brake_target = 0.2f;
+        } else {
+            brake_target = 0.0f;
+            throttle_target = (1.0f - thr_blend) * raw_throttle + thr_blend * net_nn_thr;
+            if (throttle_target < 0.30f) throttle_target = 0.30f;
+        }
+
+        steer_target = (1.0f - steer_blend) * raw_steer_input + steer_blend * nn_steer;
+        if (steer_target < -1.0f) steer_target = -1.0f;
+        if (steer_target > 1.0f) steer_target = 1.0f;
+
+        if (closing_brake > brake_target) {
+            brake_target = closing_brake;
+            throttle_target = 0.0f;
+        }
+    }
+
+    ai->smooth_steer += (steer_target - ai->smooth_steer) * fminf(1.0f, dt * 14.0f);
+    ai->smooth_throttle += (throttle_target - ai->smooth_throttle) * fminf(1.0f, dt * 10.0f);
+    ai->smooth_brake += (brake_target - ai->smooth_brake) * fminf(1.0f, dt * 14.0f);
+
+    car->steer_input = ai->smooth_steer;
     car->throttle_input = ai->smooth_throttle;
     car->brake_input = ai->smooth_brake;
-    car->handbrake = false;
+    car->handbrake = handbrake_target;
 }
 
 // -----------------------------------------------------------------------------
@@ -628,9 +792,9 @@ ZeroRaceGame zero_race_game_create(void) {
         game.cars[k].track_progress_s = s_arc_lengths[seg] + t * s_segment_lengths[seg];
     }
 
-    game.ai_controllers[0] = zero_ai_controller_create(1, 1.03f, -1.8f);
-    game.ai_controllers[1] = zero_ai_controller_create(2, 0.96f, 0.0f);
-    game.ai_controllers[2] = zero_ai_controller_create(3, 0.90f, 1.8f);
+    game.ai_controllers[0] = zero_ai_controller_create_nn(1, ZERO_AI_APEX_PREDATOR);
+    game.ai_controllers[1] = zero_ai_controller_create_nn(2, ZERO_AI_PRECISION_MASTER);
+    game.ai_controllers[2] = zero_ai_controller_create_nn(3, ZERO_AI_DRIFT_KING);
 
     return game;
 }
@@ -717,296 +881,4 @@ void zero_race_game_step(ZeroRaceGame *game, float dt) {
     if (game->race_started) {
         game->race_time += dt;
     }
-}
-
-// -----------------------------------------------------------------------------
-// Weak Fallback Implementation of Vehicle Physics (overridden by M2 when linked)
-// -----------------------------------------------------------------------------
-
-__attribute__((weak)) ZeroVehicleEnhanced zero_vehicle_enhanced_create(Vec3 spawn_pos, Quat spawn_rot) {
-    ZeroVehicleEnhanced car;
-    memset(&car, 0, sizeof(car));
-
-    car.position = spawn_pos;
-    float q_mag = quat_dot(spawn_rot, spawn_rot);
-    car.orientation = (q_mag > 1e-4f) ? quat_normalize(spawn_rot) : quat_identity();
-    car.transform = mat4_identity();
-
-    car.mass = 1150.0f;
-    car.inertia = vec3(1400.0f, 950.0f, 750.0f);
-    car.inv_inertia = vec3(1.0f / 1400.0f, 1.0f / 950.0f, 1.0f / 750.0f);
-
-    float half_width_f = 0.82f;
-    float half_width_r = 0.84f;
-    float front_z = 1.35f;
-    float rear_z = -1.30f;
-
-    // Wheel 0: FL, Wheel 1: FR, Wheel 2: RL, Wheel 3: RR
-    car.wheels[0].hardpoint = vec3(-half_width_f, 0.0f, front_z);
-    car.wheels[0].is_front = true;
-    car.wheels[0].is_drive = false;
-
-    car.wheels[1].hardpoint = vec3(half_width_f, 0.0f, front_z);
-    car.wheels[1].is_front = true;
-    car.wheels[1].is_drive = false;
-
-    car.wheels[2].hardpoint = vec3(-half_width_r, 0.0f, rear_z);
-    car.wheels[2].is_front = false;
-    car.wheels[2].is_drive = true;
-
-    car.wheels[3].hardpoint = vec3(half_width_r, 0.0f, rear_z);
-    car.wheels[3].is_front = false;
-    car.wheels[3].is_drive = true;
-
-    for (int i = 0; i < 4; ++i) {
-        car.wheels[i].rest_length = 0.55f;
-        car.wheels[i].spring_stiffness = 44000.0f;
-        car.wheels[i].damping_rate = 3600.0f;
-        car.wheels[i].radius = 0.37f;
-        car.wheels[i].current_length = 0.55f;
-    }
-
-    car.anti_roll_stiffness_front = 8500.0f;
-    car.anti_roll_stiffness_rear = 5200.0f;
-
-    car.transmission.current_gear = ZERO_GEAR_1;
-    car.transmission.target_gear = ZERO_GEAR_1;
-    car.transmission.gear_ratios[0] = -3.40f;
-    car.transmission.gear_ratios[1] = 3.60f;
-    car.transmission.gear_ratios[2] = 2.19f;
-    car.transmission.gear_ratios[3] = 1.52f;
-    car.transmission.gear_ratios[4] = 1.18f;
-    car.transmission.gear_ratios[5] = 0.95f;
-    car.transmission.gear_ratios[6] = 0.78f;
-    car.transmission.final_drive_ratio = 3.73f;
-    car.transmission.torque_cut_factor = 1.0f;
-
-    car.engine_rpm = 1000.0f;
-
-    car.aero_drag_coeff = 0.32f * 2.2f;
-    car.aero_front_downforce = 1.15f;
-    car.aero_rear_downforce = 1.65f;
-    car.aero_diffuser_factor = 0.85f;
-    car.aero_airbrake_active = 0.0f;
-
-    return car;
-}
-
-__attribute__((weak)) void zero_vehicle_enhanced_update(ZeroVehicleEnhanced *car, float dt, ZeroGroundHeightFn ground_fn) {
-    if (!car || dt <= 0.0f) return;
-
-    int sub_steps = 4;
-    float sub_dt = dt / (float)sub_steps;
-
-    for (int step = 0; step < sub_steps; ++step) {
-        Mat4 rot_mat = quat_to_mat4(car->orientation);
-        Vec3 up = vec3(rot_mat.m[4], rot_mat.m[5], rot_mat.m[6]);
-
-        Vec3 total_force = vec3(0.0f, -9.81f * car->mass, 0.0f);
-        Vec3 total_torque = vec3(0.0f, 0.0f, 0.0f);
-
-        float speed_kmh_approx = vec3_length(car->velocity) * 3.6f;
-        float speed_factor = speed_kmh_approx / 120.0f;
-        if (speed_factor > 1.0f) speed_factor = 1.0f;
-        float lock_degrees = 24.0f - speed_factor * 12.0f;
-        float max_steer = ZERO_DEG2RAD(lock_degrees);
-        float current_steer = car->steer_input * max_steer;
-
-        float susp_travel[4] = {0};
-
-        for (int i = 0; i < 4; ++i) {
-            ZeroWheel *w = &car->wheels[i];
-            w->steer_angle = w->is_front ? current_steer : 0.0f;
-
-            Vec3 r_w = rotate_vector_by_quat(car->orientation, w->hardpoint);
-            Vec3 hardpoint_world = vec3_add(car->position, r_w);
-
-            Vec3 ground_norm = vec3(0.0f, 1.0f, 0.0f);
-            float ground_y = 0.0f;
-            if (ground_fn) {
-                ground_y = ground_fn(hardpoint_world.x, hardpoint_world.z, &ground_norm);
-            }
-
-            float ray_len = w->rest_length + w->radius;
-            float contact_dist = hardpoint_world.y - ground_y;
-
-            if (contact_dist < ray_len) {
-                w->is_grounded = true;
-                w->current_length = contact_dist - w->radius;
-                if (w->current_length < 0.05f) w->current_length = 0.05f;
-
-                float compression = w->rest_length - w->current_length;
-                susp_travel[i] = compression;
-
-                Vec3 point_vel = vec3_add(car->velocity, vec3_cross(car->angular_velocity, r_w));
-                float susp_vel = vec3_dot(point_vel, up);
-
-                float spring_f = w->spring_stiffness * compression;
-                float damper_f = -w->damping_rate * susp_vel;
-                float normal_f = spring_f + damper_f;
-                if (normal_f < 0.0f) normal_f = 0.0f;
-
-                Quat steer_q = quat_from_axis_angle(vec3(0.0f, 1.0f, 0.0f), w->steer_angle);
-                Quat wheel_q = quat_mul(car->orientation, steer_q);
-                Mat4 wheel_rot = quat_to_mat4(wheel_q);
-                Vec3 wheel_fwd = vec3(wheel_rot.m[8], wheel_rot.m[9], wheel_rot.m[10]);
-                Vec3 wheel_right = vec3(wheel_rot.m[0], wheel_rot.m[1], wheel_rot.m[2]);
-
-                float v_lat = vec3_dot(point_vel, wheel_right);
-                float v_long = vec3_dot(point_vel, wheel_fwd);
-
-                float cornering_stiff = w->is_front ? 52000.0f : 48000.0f;
-                if (car->handbrake && !w->is_front) {
-                    cornering_stiff = 5500.0f;
-                }
-                float lat_force_mag = -v_lat * cornering_stiff;
-                float max_lat = normal_f * 2.45f;
-                if (lat_force_mag > max_lat) lat_force_mag = max_lat;
-                if (lat_force_mag < -max_lat) lat_force_mag = -max_lat;
-
-                float drive_f = 0.0f;
-                float brake_f = 0.0f;
-                if (w->is_drive) {
-                    drive_f = car->throttle_input * 4200.0f;
-                }
-                if (car->brake_input > 0.01f) {
-                    if (v_long > 0.1f) {
-                        brake_f = -car->brake_input * 6000.0f;
-                    } else if (v_long < -0.1f) {
-                        brake_f = car->brake_input * 6000.0f;
-                    }
-                }
-                if (car->transmission.current_gear == ZERO_GEAR_REVERSE && w->is_drive) {
-                    drive_f = -car->throttle_input * 3500.0f;
-                }
-                if (car->handbrake && !w->is_front) {
-                    brake_f -= (v_long > 0.1f ? 1.0f : (v_long < -0.1f ? -1.0f : 0.0f)) * 8000.0f;
-                }
-
-                Vec3 f_wheel = vec3_add(
-                    vec3_scale(up, normal_f),
-                    vec3_add(vec3_scale(wheel_right, lat_force_mag), vec3_scale(wheel_fwd, drive_f + brake_f))
-                );
-
-                total_force = vec3_add(total_force, f_wheel);
-                total_torque = vec3_add(total_torque, vec3_cross(r_w, f_wheel));
-            } else {
-                w->is_grounded = false;
-                w->current_length = w->rest_length;
-            }
-        }
-
-        // Anti-roll bar torque coupling
-        float arb_front_force = car->anti_roll_stiffness_front * (susp_travel[0] - susp_travel[1]);
-        float arb_rear_force = car->anti_roll_stiffness_rear * (susp_travel[2] - susp_travel[3]);
-        Vec3 arb_front_r = rotate_vector_by_quat(car->orientation, vec3(0.0f, 0.0f, 1.35f));
-        Vec3 arb_rear_r = rotate_vector_by_quat(car->orientation, vec3(0.0f, 0.0f, -1.30f));
-        total_torque = vec3_add(total_torque, vec3_cross(arb_front_r, vec3_scale(up, arb_front_force)));
-        total_torque = vec3_add(total_torque, vec3_cross(arb_rear_r, vec3_scale(up, arb_rear_force)));
-
-        // Aerodynamics
-        float speed = vec3_length(car->velocity);
-        float rho = 1.225f;
-        float dynamic_pressure = 0.5f * rho * speed * speed;
-
-        float target_airbrake = (car->brake_input > 0.3f && speed > 11.0f) ? 1.0f : 0.0f;
-        car->aero_airbrake_active += (target_airbrake - car->aero_airbrake_active) * sub_dt * 6.0f;
-
-        float effective_drag_coeff = car->aero_drag_coeff * (1.0f + 0.85f * car->aero_airbrake_active);
-        if (speed > 1e-4f) {
-            Vec3 drag = vec3_scale(car->velocity, -0.5f * rho * effective_drag_coeff * speed);
-            total_force = vec3_add(total_force, drag);
-        }
-
-        float f_downforce_front = dynamic_pressure * car->aero_front_downforce;
-        Vec3 front_aero_pos = rotate_vector_by_quat(car->orientation, vec3(0.0f, 0.0f, 1.35f));
-        Vec3 front_aero_force = vec3_scale(up, -f_downforce_front);
-        total_force = vec3_add(total_force, front_aero_force);
-        total_torque = vec3_add(total_torque, vec3_cross(front_aero_pos, front_aero_force));
-
-        float f_downforce_rear = dynamic_pressure * car->aero_rear_downforce * (1.0f + 0.65f * car->aero_airbrake_active);
-        Vec3 rear_aero_pos = rotate_vector_by_quat(car->orientation, vec3(0.0f, 0.45f, -1.30f));
-        Vec3 rear_aero_force = vec3_scale(up, -f_downforce_rear);
-        total_force = vec3_add(total_force, rear_aero_force);
-        total_torque = vec3_add(total_torque, vec3_cross(rear_aero_pos, rear_aero_force));
-
-        float avg_susp_h = 0.25f * (car->wheels[0].current_length + car->wheels[1].current_length +
-                                   car->wheels[2].current_length + car->wheels[3].current_length);
-        if (avg_susp_h < 0.08f) avg_susp_h = 0.08f;
-        float ground_proximity = 0.35f / avg_susp_h;
-        if (ground_proximity > 3.0f) ground_proximity = 3.0f;
-        float f_diffuser = dynamic_pressure * car->aero_diffuser_factor * ground_proximity;
-        total_force = vec3_add(total_force, vec3_scale(up, -f_diffuser));
-
-        Vec3 aero_rot_damping = vec3_scale(car->angular_velocity, -(280.0f + 15.0f * speed));
-        total_torque = vec3_add(total_torque, aero_rot_damping);
-
-        // Integration
-        Vec3 accel = vec3_scale(total_force, 1.0f / car->mass);
-        car->velocity = vec3_add(car->velocity, vec3_scale(accel, sub_dt));
-
-        Vec3 ang_accel = apply_world_inv_inertia(car->orientation, car->inv_inertia, total_torque);
-        car->angular_velocity = vec3_add(car->angular_velocity, vec3_scale(ang_accel, sub_dt));
-
-        car->position = vec3_add(car->position, vec3_scale(car->velocity, sub_dt));
-
-        Quat w_quat = {car->angular_velocity.x, car->angular_velocity.y, car->angular_velocity.z, 0.0f};
-        Quat dq = quat_mul(w_quat, car->orientation);
-        car->orientation.x += 0.5f * dq.x * sub_dt;
-        car->orientation.y += 0.5f * dq.y * sub_dt;
-        car->orientation.z += 0.5f * dq.z * sub_dt;
-        car->orientation.w += 0.5f * dq.w * sub_dt;
-        car->orientation = quat_normalize(car->orientation);
-
-        // Track Spline Barrier Reflection
-        int near_idx = 0;
-        float near_t = 0.0f;
-        float near_dist_sq = 0.0f;
-        zero_track_find_nearest_segment(car->position, &near_idx, &near_t, &near_dist_sq);
-        float dist_to_center = sqrtf(near_dist_sq);
-        const float barrier_radius = ZERO_TRACK_BARRIER_DIST - 1.2f;
-
-        if (dist_to_center > barrier_radius) {
-            int next_idx = (near_idx + 1) % ZERO_TRACK_SPLINE_COUNT;
-            float qx = g_track_spline[near_idx][0] + near_t * (g_track_spline[next_idx][0] - g_track_spline[near_idx][0]);
-            float qz = g_track_spline[near_idx][1] + near_t * (g_track_spline[next_idx][1] - g_track_spline[near_idx][1]);
-            Vec3 to_car = vec3(car->position.x - qx, 0.0f, car->position.z - qz);
-            Vec3 barrier_normal = vec3_normalize(to_car);
-
-            car->position.x = qx + barrier_normal.x * barrier_radius;
-            car->position.z = qz + barrier_normal.z * barrier_radius;
-
-            float vn = vec3_dot(car->velocity, barrier_normal);
-            if (vn > 0.0f) {
-                Vec3 v_norm = vec3_scale(barrier_normal, vn);
-                Vec3 v_tan = vec3_sub(car->velocity, v_norm);
-                car->velocity = vec3_add(vec3_scale(v_tan, 0.70f), vec3_scale(v_norm, -0.20f));
-            }
-        }
-    }
-
-    // Telemetry updates
-    car->speed_kmh = vec3_length(car->velocity) * 3.6f;
-    Mat4 tr = mat4_translate(car->position);
-    Mat4 rot = quat_to_mat4(car->orientation);
-    car->transform = mat4_mul(tr, rot);
-
-    // Automatic transmission simulation
-    if (car->speed_kmh < 35.0f) car->transmission.current_gear = ZERO_GEAR_1;
-    else if (car->speed_kmh < 70.0f) car->transmission.current_gear = ZERO_GEAR_2;
-    else if (car->speed_kmh < 110.0f) car->transmission.current_gear = ZERO_GEAR_3;
-    else if (car->speed_kmh < 160.0f) car->transmission.current_gear = ZERO_GEAR_4;
-    else if (car->speed_kmh < 210.0f) car->transmission.current_gear = ZERO_GEAR_5;
-    else car->transmission.current_gear = ZERO_GEAR_6;
-
-    float gear_ratio = car->transmission.gear_ratios[(int)car->transmission.current_gear];
-    float wheel_rpm = (car->speed_kmh / (3.6f * 0.37f * 2.0f * ZERO_PI)) * 60.0f;
-    car->engine_rpm = 1000.0f + fabsf(wheel_rpm * gear_ratio * car->transmission.final_drive_ratio);
-    if (car->engine_rpm > 7500.0f) car->engine_rpm = 7500.0f;
-
-    Vec3 fwd = vec3(car->transform.m[8], car->transform.m[9], car->transform.m[10]);
-    float forward_speed = vec3_dot(car->velocity, fwd);
-    float lateral_speed = vec3_dot(car->velocity, vec3(car->transform.m[0], car->transform.m[1], car->transform.m[2]));
-    car->drift_angle = (fabsf(forward_speed) > 1.0f) ? atan2f(lateral_speed, fabsf(forward_speed)) : 0.0f;
-    car->is_drifting = (fabsf(car->drift_angle) > ZERO_DEG2RAD(10.0f) && car->speed_kmh > 20.0f);
 }
