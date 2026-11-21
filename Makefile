@@ -8,11 +8,12 @@ TEST_SRC = tests/test_zero_engine.c
 TEST_BIN = build/test_zero_engine
 DEMO_BIN = build/demo_3d_viewport
 CAR_BIN = build/demo_car_game
+STUDIO_BIN = build/demo_engine_editor
 LIB = build/libzero_engine.a
 
-.PHONY: all clean test demo car_game
+.PHONY: all clean test demo car_game studio
 
-all: $(LIB) $(TEST_BIN) $(DEMO_BIN) $(CAR_BIN)
+all: $(LIB) $(TEST_BIN) $(DEMO_BIN) $(CAR_BIN) $(STUDIO_BIN)
 
 build:
 	mkdir -p build
@@ -32,6 +33,9 @@ $(DEMO_BIN): examples/demo_3d_viewport.c $(LIB) | build
 $(CAR_BIN): examples/demo_car_game.c $(LIB) | build
 	$(CC) $(CFLAGS) examples/demo_car_game.c $(LIB) $(LDFLAGS) -o $@
 
+$(STUDIO_BIN): examples/demo_engine_editor.c $(LIB) | build
+	$(CC) $(CFLAGS) examples/demo_engine_editor.c $(LIB) $(LDFLAGS) -o $@
+
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
@@ -40,6 +44,9 @@ demo: $(DEMO_BIN)
 
 car_game: $(CAR_BIN)
 	./$(CAR_BIN)
+
+studio: $(STUDIO_BIN)
+	./$(STUDIO_BIN)
 
 clean:
 	rm -rf build
