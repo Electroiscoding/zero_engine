@@ -910,8 +910,8 @@ void zero_game_ui_render_hud(ZeroGameUI *gui, const ZeroGameTelemetry *telem, fl
     }
 
     /* 7. Controls Hint Guide (Top-Right) */
-    zero_ui_draw_text(&gui->ui, screen_w - 220.0f, 20.0f,
-                      "[ESC] PAUSE  [C] CAM", vec4(0.65f, 0.70f, 0.80f, 0.85f), 0.80f);
+    zero_ui_draw_text(&gui->ui, screen_w - 310.0f, 20.0f,
+                      "[ESC] PAUSE  [C] CAM  [R] RESET", vec4(0.65f, 0.70f, 0.80f, 0.85f), 0.80f);
 }
 
 void zero_game_ui_render_pause(ZeroGameUI *gui, float screen_w, float screen_h) {

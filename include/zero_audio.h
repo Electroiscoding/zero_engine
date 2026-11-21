@@ -33,6 +33,8 @@ typedef struct ZeroAudioParams {
     bool trigger_menu_beep;
     bool trigger_countdown_red;
     bool trigger_countdown_green;
+    bool trigger_crash;
+    float crash_intensity;
 } ZeroAudioParams;
 
 typedef struct ZeroAudioEngine {
@@ -56,6 +58,9 @@ typedef struct ZeroAudioEngine {
     int sfx_type;
     float pop_timer;
     float pop_phase;
+    float crash_timer;
+    float crash_phase;
+    float crash_gain;
     ZeroAudioParams params;
     float master_volume;
     bool is_muted;

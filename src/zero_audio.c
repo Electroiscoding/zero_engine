@@ -234,6 +234,10 @@ void zero_audio_update_params(ZeroAudioEngine *audio, const ZeroAudioParams *par
     if (params->trigger_countdown_green) {
         audio->params.trigger_countdown_green = true;
     }
+    if (params->trigger_crash) {
+        audio->params.trigger_crash = true;
+        audio->params.crash_intensity = params->crash_intensity;
+    }
     pthread_mutex_unlock(&audio->lock);
 }
 
@@ -247,6 +251,13 @@ void zero_audio_synthesize_buffer(ZeroAudioEngine *audio, int16_t *out_samples, 
         audio->pop_timer = 0.12f;
         audio->pop_phase = 0.0f;
         audio->params.trigger_shift_pop = false;
+    }
+    if (audio->params.trigger_crash) {
+        audio->crash_timer = 0.38f;
+        audio->crash_phase = 0.0f;
+        audio->crash_gain = (audio->params.crash_intensity > 0.05f) ? audio->params.crash_intensity : 1.0f;
+        if (audio->crash_gain > 2.0f) audio->crash_gain = 2.0f;
+        audio->params.trigger_crash = false;
     }
     if (audio->params.trigger_menu_beep) {
         audio->sfx_type = ZERO_SFX_MENU_BEEP;
@@ -424,12 +435,34 @@ void zero_audio_synthesize_buffer(ZeroAudioEngine *audio, int16_t *out_samples, 
             }
         }
 
-        /* 6. Master Mixer with Hyperbolic Tangent Soft-Clipping Saturation */
+        /* 6. Dynamic Collision Metal Crunch / Grind Synthesizer */
+        float s_crash = 0.0f;
+        if (audio->crash_timer > 0.0f) {
+            float t_crash = 0.38f - audio->crash_timer;
+            float env_thud = expf(-t_crash / 0.060f);
+            float env_grind = expf(-t_crash / 0.160f);
+            audio->crash_phase += ZERO_TWO_PI * (80.0f + 1600.0f * env_thud) * dt;
+            if (audio->crash_phase >= ZERO_TWO_PI * 4.0f) {
+                audio->crash_phase -= ZERO_TWO_PI * 4.0f;
+            }
+            float c_noise = zero_audio_xorshift32(&audio->noise_seed);
+            float thud = sinf(audio->crash_phase) * env_thud * 0.90f;
+            float grind = c_noise * env_grind * 0.80f;
+            s_crash = (thud + grind) * audio->crash_gain;
+
+            audio->crash_timer -= dt;
+            if (audio->crash_timer <= 0.0f) {
+                audio->crash_timer = 0.0f;
+            }
+        }
+
+        /* 7. Master Mixer with Hyperbolic Tangent Soft-Clipping Saturation */
         float mix = s_engine * 0.55f
                   + s_tire * 0.45f
                   + s_wind * 0.35f
                   + s_pop * 0.50f
-                  + s_sfx * 0.60f;
+                  + s_sfx * 0.60f
+                  + s_crash * 0.75f;
 
         float sat = tanhf(mix);
         if (is_muted) {

@@ -285,100 +285,90 @@ void zero_vehicle_apply_aerodynamics(
 void zero_vehicle_resolve_barrier_collision(ZeroVehicleEnhanced *car, ZeroGroundHeightFn ground_fn) {
     if (!car) return;
 
-    float min_dsq = 1e9f;
-    int best_i = 0;
+    int best_idx = 0;
+    float best_t = 0.0f;
+    float best_dist_sq = 1e30f;
+
     for (int i = 0; i < ZERO_TRACK_SPLINE_COUNT; ++i) {
-        float dx = car->position.x - g_track_spline[i][0];
-        float dz = car->position.z - g_track_spline[i][1];
-        float dsq = dx * dx + dz * dz;
-        if (dsq < min_dsq) {
-            min_dsq = dsq;
-            best_i = i;
-        }
-    }
+        int next_i = (i + 1) % ZERO_TRACK_SPLINE_COUNT;
+        float ax = g_track_spline[i][0];
+        float az = g_track_spline[i][1];
+        float bx = g_track_spline[next_i][0];
+        float bz = g_track_spline[next_i][1];
 
-    if (min_dsq > 1225.0f) return;
+        float abx = bx - ax;
+        float abz = bz - az;
+        float seg_len_sq = abx * abx + abz * abz;
+        if (seg_len_sq < 1e-8f) continue;
 
-    int prev_i = (best_i - 1 + ZERO_TRACK_SPLINE_COUNT) % ZERO_TRACK_SPLINE_COUNT;
-    int next_i = (best_i + 1) % ZERO_TRACK_SPLINE_COUNT;
-
-    float best_dist_sq = 1e9f;
-    float best_lat_offset = 0.0f;
-    float best_nx = 0.0f, best_nz = 0.0f;
-
-    int seg_starts[2] = { prev_i, best_i };
-    int seg_ends[2]   = { best_i, next_i };
-
-    for (int s = 0; s < 2; ++s) {
-        int i0 = seg_starts[s];
-        int i1 = seg_ends[s];
-        float sx = g_track_spline[i1][0] - g_track_spline[i0][0];
-        float sz = g_track_spline[i1][1] - g_track_spline[i0][1];
-        float slen_sq = sx * sx + sz * sz;
-        if (slen_sq < 1e-4f) continue;
-
-        float to_x = car->position.x - g_track_spline[i0][0];
-        float to_z = car->position.z - g_track_spline[i0][1];
-        float t = (to_x * sx + to_z * sz) / slen_sq;
+        float apx = car->position.x - ax;
+        float apz = car->position.z - az;
+        float t = (apx * abx + apz * abz) / seg_len_sq;
         if (t < 0.0f) t = 0.0f;
         else if (t > 1.0f) t = 1.0f;
 
-        float proj_x = g_track_spline[i0][0] + t * sx;
-        float proj_z = g_track_spline[i0][1] + t * sz;
-
-        float dx = car->position.x - proj_x;
-        float dz = car->position.z - proj_z;
+        float qx = ax + t * abx;
+        float qz = az + t * abz;
+        float dx = car->position.x - qx;
+        float dz = car->position.z - qz;
         float dsq = dx * dx + dz * dz;
 
         if (dsq < best_dist_sq) {
             best_dist_sq = dsq;
-            float slen = sqrtf(slen_sq);
-            float tx = sx / slen;
-            float tz = sz / slen;
-            float nx = -tz;
-            float nz = tx;
-            best_lat_offset = dx * nx + dz * nz;
-            best_nx = nx;
-            best_nz = nz;
+            best_idx = i;
+            best_t = t;
         }
     }
 
-    float barrier_limit = ZERO_TRACK_BARRIER_DIST - 1.20f;
-    float pen = 0.0f;
-    float wall_nx = 0.0f, wall_nz = 0.0f;
+    int next_idx = (best_idx + 1) % ZERO_TRACK_SPLINE_COUNT;
+    float ax = g_track_spline[best_idx][0];
+    float az = g_track_spline[best_idx][1];
+    float bx = g_track_spline[next_idx][0];
+    float bz = g_track_spline[next_idx][1];
 
-    if (best_lat_offset > barrier_limit) {
-        pen = best_lat_offset - barrier_limit;
-        wall_nx = -best_nx;
-        wall_nz = -best_nz;
-    } else if (best_lat_offset < -barrier_limit) {
-        pen = -barrier_limit - best_lat_offset;
-        wall_nx = best_nx;
-        wall_nz = best_nz;
-    }
+    float abx = bx - ax;
+    float abz = bz - az;
+    float seg_len = sqrtf(abx * abx + abz * abz);
+    if (seg_len < 1e-4f) return;
 
-    if (pen > 0.0f) {
-        car->position.x += wall_nx * (pen + 0.30f);
-        car->position.z += wall_nz * (pen + 0.30f);
+    float tx = abx / seg_len;
+    float tz = abz / seg_len;
+    float nx = -tz;
+    float nz = tx;
+
+    float proj_x = ax + best_t * abx;
+    float proj_z = az + best_t * abz;
+
+    float to_car_x = car->position.x - proj_x;
+    float to_car_z = car->position.z - proj_z;
+    float lat_offset = to_car_x * nx + to_car_z * nz;
+
+    const float corridor_limit = ZERO_TRACK_BARRIER_DIST - 1.25f;
+    if (fabsf(lat_offset) > corridor_limit) {
+        float sign = (lat_offset >= 0.0f) ? 1.0f : -1.0f;
+        float target_lat = sign * (corridor_limit - 0.25f);
+
+        car->position.x = proj_x + nx * target_lat;
+        car->position.z = proj_z + nz * target_lat;
+
+        float wall_nx = -sign * nx;
+        float wall_nz = -sign * nz;
 
         float vn = car->velocity.x * wall_nx + car->velocity.z * wall_nz;
-        float restitution = 0.85f;
+        float vt = car->velocity.x * tx + car->velocity.z * tz;
+
+        float restitution = 0.65f;
         float new_vn = fabsf(vn) * restitution;
-        if (new_vn < 5.0f) new_vn = 5.0f;
+        if (new_vn < 4.0f) new_vn = 4.0f;
 
-        float wall_tx = -wall_nz;
-        float wall_tz = wall_nx;
-        float vt = car->velocity.x * wall_tx + car->velocity.z * wall_tz;
-        vt *= 0.98f;
-
-        car->velocity.x = wall_nx * new_vn + wall_tx * vt;
-        car->velocity.z = wall_nz * new_vn + wall_tz * vt;
+        car->velocity.x = wall_nx * new_vn + tx * vt * 0.98f;
+        car->velocity.z = wall_nz * new_vn + tz * vt * 0.98f;
 
         Mat4 ch_rot = quat_to_mat4(car->orientation);
         Vec3 fwd = vec3(ch_rot.m[8], ch_rot.m[9], ch_rot.m[10]);
         float fwd_dot_wall = fwd.x * wall_nx + fwd.z * wall_nz;
         if (fwd_dot_wall < 0.0f) {
-            float deflect_torque = (wall_nx * fwd.z - wall_nz * fwd.x) * 5.5f;
+            float deflect_torque = (wall_nx * fwd.z - wall_nz * fwd.x) * 4.5f;
             car->angular_velocity.y = deflect_torque;
         } else {
             car->angular_velocity.y *= 0.70f;
@@ -389,9 +379,13 @@ void zero_vehicle_resolve_barrier_collision(ZeroVehicleEnhanced *car, ZeroGround
 
     float ground_y = 0.0f;
     if (ground_fn) ground_y = ground_fn(car->position.x, car->position.z, NULL);
-    if (car->position.y < ground_y + 0.18f) car->position.y = ground_y + 0.18f;
-    if (car->position.y > ground_y + 2.00f) car->position.y = ground_y + 2.00f;
-    if (car->velocity.y > 4.0f) car->velocity.y = 4.0f;
+    Mat4 ch_rot = quat_to_mat4(car->orientation);
+    Vec3 u_up = vec3(ch_rot.m[4], ch_rot.m[5], ch_rot.m[6]);
+    float min_h = (u_up.y < 0.65f) ? (ground_y + 0.38f) : (ground_y + 0.18f);
+    if (car->position.y < min_h) car->position.y = min_h;
+    if (car->position.y > ground_y + 0.85f) car->position.y = ground_y + 0.85f;
+    if (car->velocity.y > 1.8f) car->velocity.y = 1.8f;
+    if (car->velocity.y < -4.0f) car->velocity.y = -4.0f;
 }
 
 void zero_vehicle_update_drift_telemetry(ZeroVehicleEnhanced *car) {
@@ -666,6 +660,25 @@ void zero_vehicle_enhanced_update(ZeroVehicleEnhanced *car, float dt, ZeroGround
         Vec3 ang_accel = apply_world_inv_inertia(car->orientation, car->inv_inertia, total_torque);
         car->angular_velocity = vec3_add(car->angular_velocity, vec3_scale(ang_accel, sub_dt));
 
+        Vec3 righting_axis = vec3_cross(u_up, vec3(0.0f, 1.0f, 0.0f));
+        float righting_len = vec3_length(righting_axis);
+        if (righting_len > 1e-4f) {
+            Vec3 righting_torque = vec3_scale(righting_axis, car->mass * 90.0f);
+            Vec3 righting_ang_accel = apply_world_inv_inertia(car->orientation, car->inv_inertia, righting_torque);
+            car->angular_velocity = vec3_add(car->angular_velocity, vec3_scale(righting_ang_accel, sub_dt));
+        }
+
+        car->angular_velocity.x = fmaxf(-1.0f, fminf(1.0f, car->angular_velocity.x * 0.70f));
+        car->angular_velocity.z = fmaxf(-1.0f, fminf(1.0f, car->angular_velocity.z * 0.70f));
+
+        if (u_up.y < 0.96f) {
+            float cur_yaw = atan2f(u_fwd.x, u_fwd.z);
+            Quat target_upright = quat_from_axis_angle(vec3(0.0f, 1.0f, 0.0f), cur_yaw);
+            car->orientation = quat_slerp(car->orientation, target_upright, fminf(1.0f, sub_dt * 25.0f));
+            car->angular_velocity.x = 0.0f;
+            car->angular_velocity.z = 0.0f;
+        }
+
         float v_forward = vec3_dot(car->velocity, u_fwd);
         float v_lateral = vec3_dot(car->velocity, u_right);
         float v_vertical = vec3_dot(car->velocity, u_up);
@@ -696,6 +709,16 @@ void zero_vehicle_enhanced_update(ZeroVehicleEnhanced *car, float dt, ZeroGround
         car->orientation.z += dq.z * sub_dt;
         car->orientation.w += dq.w * sub_dt;
         car->orientation = quat_normalize(car->orientation);
+
+        Mat4 ch_m = quat_to_mat4(car->orientation);
+        Vec3 u_post_up = vec3(ch_m.m[4], ch_m.m[5], ch_m.m[6]);
+        if (u_post_up.y < 0.95f) {
+            Vec3 u_post_fwd = vec3(ch_m.m[8], ch_m.m[9], ch_m.m[10]);
+            float yaw = atan2f(u_post_fwd.x, u_post_fwd.z);
+            car->orientation = quat_from_axis_angle(vec3(0.0f, 1.0f, 0.0f), yaw);
+            car->angular_velocity.x = 0.0f;
+            car->angular_velocity.z = 0.0f;
+        }
 
         zero_vehicle_resolve_barrier_collision(car, ground_fn);
     }

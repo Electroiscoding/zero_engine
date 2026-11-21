@@ -298,6 +298,45 @@ static ZERO_FORCE_INLINE Quat quat_normalize(Quat q) {
     return quat_identity();
 }
 
+static ZERO_FORCE_INLINE Quat quat_nlerp(Quat a, Quat b, float t) {
+    if (quat_dot(a, b) < 0.0f) {
+        b.x = -b.x;
+        b.y = -b.y;
+        b.z = -b.z;
+        b.w = -b.w;
+    }
+    Quat r;
+    r.x = a.x + t * (b.x - a.x);
+    r.y = a.y + t * (b.y - a.y);
+    r.z = a.z + t * (b.z - a.z);
+    r.w = a.w + t * (b.w - a.w);
+    return quat_normalize(r);
+}
+
+static ZERO_FORCE_INLINE Quat quat_slerp(Quat a, Quat b, float t) {
+    float dot = quat_dot(a, b);
+    if (dot < 0.0f) {
+        b.x = -b.x;
+        b.y = -b.y;
+        b.z = -b.z;
+        b.w = -b.w;
+        dot = -dot;
+    }
+    if (dot > 0.9995f) {
+        return quat_nlerp(a, b, t);
+    }
+    float theta = acosf(dot);
+    float sin_theta = sinf(theta);
+    float wa = sinf((1.0f - t) * theta) / sin_theta;
+    float wb = sinf(t * theta) / sin_theta;
+    Quat r;
+    r.x = wa * a.x + wb * b.x;
+    r.y = wa * a.y + wb * b.y;
+    r.z = wa * a.z + wb * b.z;
+    r.w = wa * a.w + wb * b.w;
+    return quat_normalize(r);
+}
+
 static ZERO_FORCE_INLINE Mat4 quat_to_mat4(Quat q) {
     Mat4 res = mat4_identity();
     float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;

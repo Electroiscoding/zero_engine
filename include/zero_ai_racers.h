@@ -92,6 +92,18 @@ typedef struct ZeroAIController {
     float smooth_brake;             // Filtered brake
 } ZeroAIController;
 
+#define ZERO_MAX_COLLISION_EVENTS 16
+
+typedef struct ZeroCollisionEvent {
+    int carA_index;
+    int carB_index;       // -1 for barrier collisions
+    Vec3 contact_point;
+    Vec3 normal;
+    float impulse_magnitude;
+    float relative_speed;
+    bool is_severe;
+} ZeroCollisionEvent;
+
 typedef struct ZeroRaceGame {
     ZeroVehicleEnhanced cars[ZERO_RACE_CAR_COUNT]; // Car 0 = Player, Cars 1-3 = AI
     ZeroAIController ai_controllers[3];            // AI logic for Cars 1, 2, 3
@@ -101,6 +113,8 @@ typedef struct ZeroRaceGame {
     bool race_finished;
     int total_laps;                                // Default 3 Laps
     uint32_t winning_car_index;
+    ZeroCollisionEvent collision_events[ZERO_MAX_COLLISION_EVENTS];
+    int collision_event_count;
 } ZeroRaceGame;
 
 // Core Function Prototypes

@@ -8,13 +8,15 @@ TEST_SRC = tests/test_zero_engine.c
 TEST_BIN = build/test_zero_engine
 TEST_RACE_SRC = tests/test_race_integration.c
 TEST_RACE_BIN = build/test_race_integration
+TEST_COLLISION_SRC = tests/test_race_collision.c
+TEST_COLLISION_BIN = build/test_race_collision
 DEMO_BIN = build/demo_3d_viewport
 CAR_BIN = build/demo_car_game
 STUDIO_BIN = build/demo_engine_editor
 RACE_BIN = build/demo_race_game
 LIB = build/libzero_engine.a
 
-.PHONY: all clean test demo car_game studio race_game test_race
+.PHONY: all clean test demo car_game studio race_game test_race test_collision
 
 all: $(LIB) $(TEST_BIN) $(DEMO_BIN) $(CAR_BIN) $(STUDIO_BIN)
 
@@ -45,11 +47,17 @@ $(RACE_BIN): examples/demo_race_game.c $(LIB) | build
 $(TEST_RACE_BIN): $(TEST_RACE_SRC) $(LIB) | build
 	$(CC) $(CFLAGS) $(TEST_RACE_SRC) $(LIB) $(LDFLAGS) -o $@
 
+$(TEST_COLLISION_BIN): $(TEST_COLLISION_SRC) $(LIB) | build
+	$(CC) $(CFLAGS) $(TEST_COLLISION_SRC) $(LIB) $(LDFLAGS) -o $@
+
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
 test_race: $(TEST_RACE_BIN)
 	./$(TEST_RACE_BIN)
+
+test_collision: $(TEST_COLLISION_BIN)
+	./$(TEST_COLLISION_BIN)
 
 demo: $(DEMO_BIN)
 	./$(DEMO_BIN)

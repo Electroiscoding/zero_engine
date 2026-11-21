@@ -459,6 +459,7 @@ static bool test_obb_sat(Vec3 posA, Quat rotA, Vec3 posB, Quat rotB,
 void zero_race_game_resolve_car_collisions(ZeroRaceGame *game) {
     if (!game) return;
 
+    game->collision_event_count = 0;
     const Vec3 box_half_extents = vec3(0.95f, 0.55f, 2.30f);
 
     for (int i = 0; i < ZERO_RACE_CAR_COUNT - 1; ++i) {
@@ -480,7 +481,7 @@ void zero_race_game_resolve_car_collisions(ZeroRaceGame *game) {
             if (!hit || depth <= 1e-4f) continue;
 
             // Symmetrical position separation
-            Vec3 sep = vec3_scale(normal, depth * 0.5f);
+            Vec3 sep = vec3_scale(normal, depth * 0.52f);
             carA->position = vec3_sub(carA->position, sep);
             carB->position = vec3_add(carB->position, sep);
 
@@ -508,8 +509,10 @@ void zero_race_game_resolve_car_collisions(ZeroRaceGame *game) {
                 float K = inv_mA + inv_mB + angA + angB;
                 if (K < 1e-6f) K = inv_mA + inv_mB;
 
-                const float restitution = 0.35f;
-                float J = -(1.0f + restitution) * vn / K;
+                float v_impact = fabsf(vn);
+                float restitution = 0.45f + 0.35f * fminf(1.0f, v_impact / 18.0f);
+                float speed_boost = (v_impact > 6.0f) ? 1.35f : 1.0f;
+                float J = -(1.0f + restitution) * vn / K * speed_boost;
                 if (J < 0.0f) J = 0.0f;
 
                 Vec3 impulse = vec3_scale(normal, J);
@@ -517,24 +520,59 @@ void zero_race_game_resolve_car_collisions(ZeroRaceGame *game) {
                 carA->velocity = vec3_sub(carA->velocity, vec3_scale(impulse, inv_mA));
                 carB->velocity = vec3_add(carB->velocity, vec3_scale(impulse, inv_mB));
 
+                // Vertical kinetic bounce only on severe high-speed impact (max 0.85 m/s)
+                if (v_impact > 15.0f && carA->velocity.y < 0.6f) {
+                    float v_pop = fminf(0.85f, 0.52f + (v_impact - 15.0f) * 0.015f);
+                    carA->velocity.y = fmaxf(carA->velocity.y, v_pop);
+                    carB->velocity.y = fmaxf(carB->velocity.y, v_pop);
+                }
+
+                // Pure yaw torque on collisions: realistic horizontal spinout without barrel roll/flipping
                 Vec3 torqueA = vec3_cross(rA, vec3_scale(impulse, -1.0f));
                 Vec3 torqueB = vec3_cross(rB, impulse);
+                torqueA.x = 0.0f;
+                torqueA.z = 0.0f;
+                torqueB.x = 0.0f;
+                torqueB.z = 0.0f;
+                torqueA.y = fmaxf(-3500.0f, fminf(3500.0f, torqueA.y));
+                torqueB.y = fmaxf(-3500.0f, fminf(3500.0f, torqueB.y));
                 carA->angular_velocity = vec3_add(carA->angular_velocity, apply_world_inv_inertia(carA->orientation, carA->inv_inertia, torqueA));
                 carB->angular_velocity = vec3_add(carB->angular_velocity, apply_world_inv_inertia(carB->orientation, carB->inv_inertia, torqueB));
 
-                // Friction impulse
+                // Dynamic friction impulse with spin torque
                 Vec3 vt = vec3_sub(v_rel, vec3_scale(normal, vn));
                 float vt_len = vec3_length(vt);
                 if (vt_len > 1e-4f) {
                     Vec3 tangent = vec3_scale(vt, 1.0f / vt_len);
                     float Jt = -vt_len / K;
-                    float max_Jt = 0.30f * J;
+                    float max_Jt = 0.40f * J;
                     if (Jt < -max_Jt) Jt = -max_Jt;
                     if (Jt > max_Jt) Jt = max_Jt;
                     Vec3 friction_impulse = vec3_scale(tangent, Jt);
 
                     carA->velocity = vec3_sub(carA->velocity, vec3_scale(friction_impulse, inv_mA));
                     carB->velocity = vec3_add(carB->velocity, vec3_scale(friction_impulse, inv_mB));
+
+                    Vec3 f_torqueA = vec3_cross(rA, vec3_scale(friction_impulse, -1.0f));
+                    Vec3 f_torqueB = vec3_cross(rB, friction_impulse);
+                    f_torqueA.x = 0.0f;
+                    f_torqueA.z = 0.0f;
+                    f_torqueB.x = 0.0f;
+                    f_torqueB.z = 0.0f;
+                    carA->angular_velocity = vec3_add(carA->angular_velocity, apply_world_inv_inertia(carA->orientation, carA->inv_inertia, f_torqueA));
+                    carB->angular_velocity = vec3_add(carB->angular_velocity, apply_world_inv_inertia(carB->orientation, carB->inv_inertia, f_torqueB));
+                }
+
+                // Log collision event for debris, particles, track rupture, and sound
+                if (game->collision_event_count < ZERO_MAX_COLLISION_EVENTS) {
+                    ZeroCollisionEvent *ev = &game->collision_events[game->collision_event_count++];
+                    ev->carA_index = i;
+                    ev->carB_index = j;
+                    ev->contact_point = contact_point;
+                    ev->normal = normal;
+                    ev->impulse_magnitude = J;
+                    ev->relative_speed = v_impact;
+                    ev->is_severe = (v_impact > 7.5f || J > 9000.0f);
                 }
             }
         }

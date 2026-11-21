@@ -142,15 +142,28 @@ void zero_race_camera_update(ZeroRaceCamera *rcam,
     switch (rcam->mode) {
         case ZERO_CAM_CHASE: {
             /* 2nd-order critically damped translation spring and target tracking */
+            Vec3 cam_up_ref = vec3(0.0f, 1.0f, 0.0f);
+            if (car_up.y > 0.40f) {
+                cam_up_ref = vec3_normalize(vec3_add(vec3_scale(vec3(0.0f, 1.0f, 0.0f), 0.85f), vec3_scale(car_up, 0.15f)));
+            }
+
+            Vec3 car_fwd_flat = vec3(car_fwd.x, 0.0f, car_fwd.z);
+            float flat_len = vec3_length(car_fwd_flat);
+            if (flat_len > 1e-3f) {
+                car_fwd_flat = vec3_scale(car_fwd_flat, 1.0f / flat_len);
+            } else {
+                car_fwd_flat = vec3(0.0f, 0.0f, 1.0f);
+            }
+
             const float h_chase = 2.4f;
             const float d_chase = 6.8f;
             Vec3 ideal_pos = vec3_sub(
-                vec3_add(car_position, vec3_scale(car_up, h_chase)),
-                vec3_scale(car_fwd, d_chase)
+                vec3_add(car_position, vec3_scale(cam_up_ref, h_chase)),
+                vec3_scale(car_fwd_flat, d_chase)
             );
             Vec3 ideal_target = vec3_add(
-                vec3_add(car_position, vec3_scale(car_up, 1.1f)),
-                vec3_scale(car_fwd, 3.5f)
+                vec3_add(car_position, vec3_scale(cam_up_ref, 1.1f)),
+                vec3_scale(car_fwd_flat, 3.5f)
             );
 
             if (is_first_update) {
@@ -162,12 +175,12 @@ void zero_race_camera_update(ZeroRaceCamera *rcam,
                 rcam->transition_start_target = ideal_target;
             }
 
-            /* Lateral G-force tilt */
+            /* Lateral G-force tilt anchored to upright reference */
             float a_lat = vec3_dot(car_accel, car_right);
             float a_lat_eff = a_lat + steer_input * speed * 0.25f;
             float tilt_angle = -fmaxf(-0.12f, fminf(0.12f, a_lat_eff * 0.015f));
             mode_up = vec3_normalize(vec3_add(
-                vec3_scale(car_up, cosf(tilt_angle)),
+                vec3_scale(cam_up_ref, cosf(tilt_angle)),
                 vec3_scale(car_right, sinf(tilt_angle))
             ));
 

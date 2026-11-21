@@ -22,7 +22,7 @@
 #include <string.h>
 #include <math.h>
 
-#define MAX_PARTICLES 1024
+#define MAX_PARTICLES 2048
 
 typedef struct ZeroParticle {
     Vec3 pos;
@@ -31,6 +31,8 @@ typedef struct ZeroParticle {
     float size;
     float life;
     float max_life;
+    float drag;
+    bool has_gravity;
     bool active;
 } ZeroParticle;
 
@@ -39,6 +41,47 @@ typedef struct ZeroParticleSystem {
     uint32_t active_count;
     ZeroMesh quad_mesh;
 } ZeroParticleSystem;
+
+#define MAX_TRACK_DEBRIS 128
+
+typedef enum ZeroDebrisType {
+    ZERO_DEBRIS_FRONT_SPLITTER = 0,
+    ZERO_DEBRIS_REAR_WING,
+    ZERO_DEBRIS_HOOD,
+    ZERO_DEBRIS_WHEEL,
+    ZERO_DEBRIS_SHARD
+} ZeroDebrisType;
+
+typedef struct ZeroTrackDebris {
+    ZeroDebrisType type;
+    Vec3 pos;
+    Vec3 vel;
+    Vec3 ang_vel;
+    Quat rot;
+    Vec3 color;
+    float life;
+    float max_life;
+    float radius;
+    float restitution;
+    bool active;
+    bool on_ground;
+} ZeroTrackDebris;
+
+#define MAX_TRACK_RUPTURES 64
+
+typedef struct ZeroTrackRupture {
+    Vec3 pos;
+    float radius;
+    float intensity;
+    float age;
+    bool active;
+} ZeroTrackRupture;
+
+typedef struct ZeroCarDamage {
+    bool lost_front_bumper;
+    bool lost_rear_wing;
+    bool lost_hood;
+} ZeroCarDamage;
 
 static void particle_system_init(ZeroParticleSystem *ps) {
     memset(ps, 0, sizeof(*ps));
@@ -53,7 +96,7 @@ static void particle_system_init(ZeroParticleSystem *ps) {
     ps->quad_mesh = zero_mesh_upload(&data);
 }
 
-static void particle_spawn(ZeroParticleSystem *ps, Vec3 pos, Vec3 vel, Vec4 color, float size, float max_life) {
+static void particle_spawn_ext(ZeroParticleSystem *ps, Vec3 pos, Vec3 vel, Vec4 color, float size, float max_life, bool has_gravity, float drag) {
     for (int i = 0; i < MAX_PARTICLES; ++i) {
         if (!ps->particles[i].active) {
             ps->particles[i].pos = pos;
@@ -62,10 +105,16 @@ static void particle_spawn(ZeroParticleSystem *ps, Vec3 pos, Vec3 vel, Vec4 colo
             ps->particles[i].size = size;
             ps->particles[i].life = max_life;
             ps->particles[i].max_life = max_life;
+            ps->particles[i].has_gravity = has_gravity;
+            ps->particles[i].drag = drag;
             ps->particles[i].active = true;
             return;
         }
     }
+}
+
+static void particle_spawn(ZeroParticleSystem *ps, Vec3 pos, Vec3 vel, Vec4 color, float size, float max_life) {
+    particle_spawn_ext(ps, pos, vel, color, size, max_life, false, 0.94f);
 }
 
 static void particle_system_update(ZeroParticleSystem *ps, float dt) {
@@ -77,8 +126,157 @@ static void particle_system_update(ZeroParticleSystem *ps, float dt) {
             p->active = false;
             continue;
         }
+        if (p->has_gravity) {
+            p->vel.y -= 19.0f * dt;
+        }
         p->pos = vec3_add(p->pos, vec3_scale(p->vel, dt));
-        p->vel = vec3_scale(p->vel, 0.94f); // Air drag
+        p->vel = vec3_scale(p->vel, p->drag);
+
+        if (p->has_gravity && p->pos.y < 0.04f) {
+            p->pos.y = 0.04f;
+            if (p->vel.y < -0.4f) {
+                p->vel.y = -p->vel.y * 0.52f;
+                p->vel.x *= 0.72f;
+                p->vel.z *= 0.72f;
+            } else {
+                p->vel.y = 0.0f;
+            }
+        }
+    }
+}
+
+static void debris_spawn(ZeroTrackDebris *pool, ZeroDebrisType type, Vec3 pos, Vec3 vel, Vec3 ang_vel, Vec3 color, float radius, float max_life) {
+    for (int i = 0; i < MAX_TRACK_DEBRIS; ++i) {
+        if (!pool[i].active) {
+            pool[i].type = type;
+            pool[i].pos = pos;
+            pool[i].vel = vel;
+            pool[i].ang_vel = ang_vel;
+            pool[i].rot = quat_identity();
+            pool[i].color = color;
+            pool[i].life = max_life;
+            pool[i].max_life = max_life;
+            pool[i].radius = radius;
+            pool[i].restitution = (type == ZERO_DEBRIS_WHEEL) ? 0.70f : 0.40f;
+            pool[i].active = true;
+            pool[i].on_ground = false;
+            return;
+        }
+    }
+}
+
+static void debris_system_update(ZeroTrackDebris *pool, ZeroParticleSystem *ps, ZeroRaceGame *game, float dt) {
+    for (int i = 0; i < MAX_TRACK_DEBRIS; ++i) {
+        if (!pool[i].active) continue;
+        ZeroTrackDebris *d = &pool[i];
+        d->life -= dt;
+        if (d->life <= 0.0f) {
+            d->active = false;
+            continue;
+        }
+
+        d->vel.y -= 18.0f * dt;
+        d->vel = vec3_scale(d->vel, 1.0f - 0.22f * dt);
+        d->pos = vec3_add(d->pos, vec3_scale(d->vel, dt));
+
+        float ang_speed = vec3_length(d->ang_vel);
+        if (ang_speed > 1e-4f) {
+            Vec3 axis = vec3_scale(d->ang_vel, 1.0f / ang_speed);
+            Quat dq = quat_from_axis_angle(axis, ang_speed * dt);
+            d->rot = quat_normalize(quat_mul(dq, d->rot));
+        }
+
+        float ground_y = 0.0f;
+        if (d->pos.y < ground_y + d->radius) {
+            d->pos.y = ground_y + d->radius;
+            if (d->vel.y < -0.8f) {
+                d->vel.y = -d->vel.y * d->restitution;
+                d->vel.x *= 0.70f;
+                d->vel.z *= 0.70f;
+                d->ang_vel = vec3_scale(d->ang_vel, 0.60f);
+
+                if (d->type == ZERO_DEBRIS_FRONT_SPLITTER || d->type == ZERO_DEBRIS_SHARD) {
+                    for (int s = 0; s < 3; ++s) {
+                        Vec3 spk_v = vec3(
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 4.0f,
+                            1.0f + ((float)rand() / (float)RAND_MAX) * 2.5f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 4.0f
+                        );
+                        particle_spawn_ext(ps, d->pos, spk_v, vec4(1.0f, 0.85f, 0.2f, 0.95f), 0.18f, 0.25f, true, 0.95f);
+                    }
+                }
+            } else {
+                d->vel.y = 0.0f;
+                d->vel.x *= 0.88f;
+                d->vel.z *= 0.88f;
+                d->ang_vel = vec3_scale(d->ang_vel, 0.82f);
+                d->on_ground = true;
+            }
+        }
+
+        int b_node = 0; float b_t = 0.0f; float b_dist_sq = 0.0f;
+        zero_track_find_nearest_segment(d->pos, &b_node, &b_t, &b_dist_sq);
+        float b_dist = sqrtf(b_dist_sq);
+        if (b_dist > (ZERO_TRACK_BARRIER_DIST - 1.20f)) {
+            Vec3 to_track = vec3_sub(vec3(g_track_spline[b_node][0], 0, g_track_spline[b_node][1]), d->pos);
+            to_track.y = 0.0f;
+            float t_len = vec3_length(to_track);
+            if (t_len > 1e-4f) {
+                Vec3 in_norm = vec3_scale(to_track, 1.0f / t_len);
+                float vn = vec3_dot(d->vel, in_norm);
+                if (vn < 0.0f) {
+                    d->vel = vec3_sub(d->vel, vec3_scale(in_norm, 1.6f * vn));
+                    d->vel.y += 2.0f;
+                }
+            }
+        }
+
+        for (int k = 0; k < ZERO_RACE_CAR_COUNT; ++k) {
+            ZeroVehicleEnhanced *car = &game->cars[k];
+            Vec3 c_diff = vec3_sub(d->pos, car->position);
+            c_diff.y = 0.0f;
+            float c_dist = vec3_length(c_diff);
+            if (c_dist < (d->radius + 1.25f)) {
+                d->vel = vec3_add(d->vel, vec3_scale(car->velocity, 0.65f));
+                d->vel.y += 5.5f + ((float)rand() / (float)RAND_MAX) * 3.5f;
+                d->ang_vel = vec3(
+                    ((float)rand() / (float)RAND_MAX - 0.5f) * 22.0f,
+                    ((float)rand() / (float)RAND_MAX - 0.5f) * 25.0f,
+                    ((float)rand() / (float)RAND_MAX - 0.5f) * 22.0f
+                );
+                car->velocity.y += 0.35f;
+                for (int sp = 0; sp < 6; ++sp) {
+                    Vec3 spk_v = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 6.0f,
+                        2.0f + ((float)rand() / (float)RAND_MAX) * 3.0f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 6.0f
+                    );
+                    particle_spawn_ext(ps, d->pos, spk_v, vec4(1.0f, 0.8f, 0.15f, 0.95f), 0.22f, 0.35f, true, 0.95f);
+                }
+            }
+        }
+    }
+}
+
+static void track_rupture_spawn(ZeroTrackRupture *ruptures, Vec3 pos, float radius) {
+    for (int i = 0; i < MAX_TRACK_RUPTURES; ++i) {
+        if (!ruptures[i].active) {
+            ruptures[i].pos = pos;
+            ruptures[i].pos.y = 0.015f;
+            ruptures[i].radius = radius;
+            ruptures[i].intensity = 1.0f;
+            ruptures[i].age = 0.0f;
+            ruptures[i].active = true;
+            return;
+        }
+    }
+}
+
+static void track_rupture_update(ZeroTrackRupture *ruptures, float dt) {
+    for (int i = 0; i < MAX_TRACK_RUPTURES; ++i) {
+        if (!ruptures[i].active) continue;
+        ruptures[i].age += dt;
+        ruptures[i].intensity = expf(-ruptures[i].age / 14.0f);
     }
 }
 
@@ -205,11 +403,15 @@ static const char *get_race_frag_shader(void) {
         "        return;\n"
         "    }\n"
         "\n"
-        "    // 3. Billboarding Particles (Tire Smoke, Barrier Sparks, Exhaust Fire)\n"
+        "    // 3. Billboarding Particles (Tire Smoke, Barrier Sparks, Exhaust Fire, Glass Shards)\n"
         "    if (u_material_mode > 8.5 && u_material_mode < 9.5) {\n"
         "        float dist = length(v_uv - vec2(0.5));\n"
         "        float alpha = clamp((0.5 - dist) * 2.0, 0.0, 1.0) * u_roughness;\n"
-        "        frag_color = vec4(u_object_color, alpha);\n"
+        "        vec3 col = u_object_color;\n"
+        "        if (dist < 0.20) {\n"
+        "            col += vec3(0.6, 0.5, 0.4) * (0.20 - dist) * 5.0;\n"
+        "        }\n"
+        "        frag_color = vec4(col, alpha);\n"
         "        return;\n"
         "    }\n"
         "\n"
@@ -336,6 +538,27 @@ static const char *get_race_frag_shader(void) {
         "        roughness = 0.25;\n"
         "        metallic = 0.20;\n"
         "    }\n"
+        "    // Mode 10: Ruptured Asphalt Battle Crater\n"
+        "    else if (u_material_mode > 9.5 && u_material_mode < 10.5) {\n"
+        "        vec2 p = v_uv * 2.0 - 1.0;\n"
+        "        float r = length(p);\n"
+        "        if (r > 1.0) discard;\n"
+        "        float angle = atan(p.y, p.x);\n"
+        "        float fissure = abs(sin(angle * 7.0 + r * 12.0)) * 0.22;\n"
+        "        if (r + fissure > 1.0) discard;\n"
+        "        albedo = vec3(0.03, 0.03, 0.035);\n"
+        "        roughness = 0.92;\n"
+        "        metallic = 0.02;\n"
+        "        float ember = clamp(1.0 - r * 2.5, 0.0, 1.0);\n"
+        "        emissive = vec3(3.5, 1.1, 0.18) * pow(ember, 2.2) * u_roughness;\n"
+        "    }\n"
+        "    // Mode 11: Carbon-Fiber Shrapnel & Jagged Debris\n"
+        "    else if (u_material_mode > 10.5 && u_material_mode < 11.5) {\n"
+        "        float weave = mod(floor(v_world_pos.x * 50.0) + floor(v_world_pos.z * 50.0), 2.0);\n"
+        "        albedo = (weave < 1.0) ? u_object_color : vec3(0.06, 0.06, 0.07);\n"
+        "        roughness = 0.20;\n"
+        "        metallic = 0.75;\n"
+        "    }\n"
         "\n"
         "    vec3 F0 = mix(vec3(0.04), albedo, metallic);\n"
         "    float NDF = distributionGGX(N, H, roughness);\n"
@@ -389,6 +612,130 @@ static ZeroMesh create_shadow_quad(void) {
     };
     uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
     ZeroMeshData data = {verts, 4, indices, 6};
+    return zero_mesh_upload(&data);
+}
+
+static ZeroMesh create_rupture_quad(void) {
+    ZeroVertex verts[4] = {
+        {{-0.5f, 0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.5f, 0.0f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.5f, 0.0f,  0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.5f, 0.0f,  0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}}
+    };
+    uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    ZeroMeshData data = {verts, 4, indices, 6};
+    return zero_mesh_upload(&data);
+}
+
+static ZeroMesh create_shard_mesh(void) {
+    ZeroVertex verts[6] = {
+        {{-0.25f,  0.02f, -0.20f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.30f,  0.03f, -0.15f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.05f, -0.01f,  0.28f}, {0.0f, 1.0f, 0.0f}, {0.5f, 1.0f}},
+        {{-0.25f, -0.04f, -0.20f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.30f, -0.03f, -0.15f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.05f, -0.05f,  0.28f}, {0.0f, -1.0f, 0.0f}, {0.5f, 1.0f}}
+    };
+    uint32_t indices[24] = {
+        0, 1, 2,  3, 5, 4,
+        0, 3, 4,  0, 4, 1,
+        1, 4, 5,  1, 5, 2,
+        2, 5, 3,  2, 3, 0
+    };
+    ZeroMeshData data = {verts, 6, indices, 24};
+    return zero_mesh_upload(&data);
+}
+
+static ZeroMesh create_front_splitter_mesh(void) {
+    ZeroVertex verts[16] = {
+        {{-0.95f, -0.04f, -0.22f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.95f, -0.04f, -0.22f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.92f, -0.03f,  0.25f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.92f, -0.03f,  0.25f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.95f,  0.03f, -0.22f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.95f,  0.03f, -0.22f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.92f,  0.04f,  0.25f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.92f,  0.04f,  0.25f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.95f, -0.04f, -0.15f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{-0.95f,  0.22f, -0.10f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.92f,  0.24f,  0.22f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.92f, -0.03f,  0.25f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.95f, -0.04f, -0.15f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.95f,  0.22f, -0.10f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{ 0.92f,  0.24f,  0.22f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{ 0.92f, -0.03f,  0.25f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}}
+    };
+    uint32_t indices[48] = {
+        4, 5, 6,  4, 6, 7,
+        0, 2, 1,  0, 3, 2,
+        0, 1, 5,  0, 5, 4,
+        1, 2, 6,  1, 6, 5,
+        2, 3, 7,  2, 7, 6,
+        3, 0, 4,  3, 4, 7,
+        8, 9, 10,  8, 10, 11,
+        12, 14, 13,  12, 15, 14
+    };
+    ZeroMeshData data = {verts, 16, indices, 48};
+    return zero_mesh_upload(&data);
+}
+
+static ZeroMesh create_rear_wing_mesh(void) {
+    ZeroVertex verts[20] = {
+        {{-0.92f,  0.00f, -0.18f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.92f,  0.00f, -0.18f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.92f,  0.04f,  0.18f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.92f,  0.04f,  0.18f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.92f, -0.04f, -0.18f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.92f, -0.04f, -0.18f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.92f,  0.00f,  0.18f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.92f,  0.00f,  0.18f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.93f, -0.15f, -0.22f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{-0.93f,  0.22f, -0.22f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.93f,  0.22f,  0.22f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.93f, -0.15f,  0.22f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.93f, -0.15f, -0.22f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.93f,  0.22f, -0.22f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+        {{ 0.93f,  0.22f,  0.22f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+        {{ 0.93f, -0.15f,  0.22f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{-0.42f, -0.45f,  0.00f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+        {{-0.42f,  0.00f,  0.00f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{ 0.42f, -0.45f,  0.00f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{ 0.42f,  0.00f,  0.00f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}}
+    };
+    uint32_t indices[48] = {
+        0, 1, 2,  0, 2, 3,
+        4, 6, 5,  4, 7, 6,
+        0, 4, 5,  0, 5, 1,
+        2, 6, 7,  2, 7, 3,
+        8, 9, 10,  8, 10, 11,
+        12, 14, 13,  12, 15, 14,
+        16, 17, 19,  16, 19, 18,
+        0, 3, 7,  0, 7, 4
+    };
+    ZeroMeshData data = {verts, 20, indices, 48};
+    return zero_mesh_upload(&data);
+}
+
+static ZeroMesh create_hood_mesh(void) {
+    ZeroVertex verts[8] = {
+        {{-0.75f,  0.00f, -0.65f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.75f,  0.00f, -0.65f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.65f, -0.10f,  0.70f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.65f, -0.10f,  0.70f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        {{-0.75f, -0.05f, -0.65f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{ 0.75f, -0.05f, -0.65f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+        {{ 0.65f, -0.15f,  0.70f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+        {{-0.65f, -0.15f,  0.70f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}}
+    };
+    uint32_t indices[36] = {
+        0, 1, 2,  0, 2, 3,
+        4, 6, 5,  4, 7, 6,
+        0, 4, 5,  0, 5, 1,
+        1, 5, 6,  1, 6, 2,
+        2, 6, 7,  2, 7, 3,
+        3, 7, 4,  3, 4, 0
+    };
+    ZeroMeshData data = {verts, 8, indices, 36};
     return zero_mesh_upload(&data);
 }
 
@@ -605,6 +952,23 @@ int main(void) {
     ZeroMesh terrain_mesh = (terrain_data.vertex_count > 0) ? zero_mesh_upload(&terrain_data) : create_shadow_quad();
     ZeroMesh gantry_mesh = (gantry_data.vertex_count > 0) ? zero_mesh_upload(&gantry_data) : create_shadow_quad();
 
+    ZeroMesh rupture_quad = create_rupture_quad();
+    ZeroMesh shard_mesh = create_shard_mesh();
+    ZeroMesh front_splitter_mesh = create_front_splitter_mesh();
+    ZeroMesh rear_wing_mesh = create_rear_wing_mesh();
+    ZeroMesh hood_mesh = create_hood_mesh();
+
+    ZeroTrackDebris debris_pool[MAX_TRACK_DEBRIS];
+    memset(debris_pool, 0, sizeof(debris_pool));
+
+    ZeroTrackRupture ruptures[MAX_TRACK_RUPTURES];
+    memset(ruptures, 0, sizeof(ruptures));
+
+    ZeroCarDamage car_damage[ZERO_RACE_CAR_COUNT];
+    memset(car_damage, 0, sizeof(car_damage));
+
+    float camera_shake_trauma = 0.0f;
+
     // 3. Subsystems: Particles, Audio, Camera, UI, Simulation
     ZeroParticleSystem ps;
     particle_system_init(&ps);
@@ -667,6 +1031,8 @@ int main(void) {
 
         // Quick Track Reset / Respawn (Key R)
         if (platform.keys['r'] || platform.keys['R']) {
+            platform.keys['r'] = false;
+            platform.keys['R'] = false;
             ZeroVehicleEnhanced *pcar = &game.cars[0];
             int seg = 0;
             float seg_t = 0.0f;
@@ -687,15 +1053,23 @@ int main(void) {
             pcar->steer_input = 0.0f;
             pcar->throttle_input = 0.0f;
             pcar->brake_input = 0.0f;
+            camera_shake_trauma = 0.0f;
         }
 
         if (zero_game_ui_is_restart_requested(&gui)) {
             zero_game_ui_clear_restart_request(&gui);
             game = zero_race_game_create();
+            memset(car_damage, 0, sizeof(car_damage));
+            memset(debris_pool, 0, sizeof(debris_pool));
+            memset(ruptures, 0, sizeof(ruptures));
+            camera_shake_trauma = 0.0f;
             gui.countdown_timer = 3.0f;
             gui.prev_countdown_timer = 3.0f;
             gui.state = ZERO_STATE_COUNTDOWN;
         }
+
+        ZeroAudioParams audio_params;
+        memset(&audio_params, 0, sizeof(audio_params));
 
         // Responsive Driving Controls with Immediate Punchy Reverse
         if (gui.state == ZERO_STATE_RACING) {
@@ -776,22 +1150,177 @@ int main(void) {
             // Advance simulation step (XPBD chassis, tire friction, barrier deflection, AI pursuit, car collisions)
             zero_race_game_step(&game, dt);
 
-            // Barrier Collision Spark Particles
+            // Dynamic Collision Events: Flying Parts, Track Ruptures, Incandescent Sparks, Screech Sound & Trauma
+            for (int e = 0; e < game.collision_event_count; ++e) {
+                ZeroCollisionEvent *ev = &game.collision_events[e];
+                Vec3 cp = ev->contact_point;
+                float v_impact = ev->relative_speed;
+
+                // 1. Audio Crash SFX Trigger
+                audio_params.trigger_crash = true;
+                audio_params.crash_intensity = fminf(2.0f, 0.6f + v_impact / 10.0f);
+
+                // 2. Camera Screen Shake Trauma
+                if (ev->carA_index == 0 || ev->carB_index == 0) {
+                    float trauma_add = 0.45f + fminf(0.55f, v_impact / 14.0f);
+                    camera_shake_trauma = fminf(1.0f, camera_shake_trauma + trauma_add);
+                }
+
+                // 3. Track Rupture Cratering on Asphalt
+                if (ev->is_severe) {
+                    track_rupture_spawn(ruptures, cp, 1.5f + fminf(2.0f, v_impact * 0.08f));
+                }
+
+                // 4. Incandescent Spark Shower (35 to 80 sparks)
+                int spark_count = (int)(35.0f + fminf(50.0f, v_impact * 2.8f));
+                for (int sp = 0; sp < spark_count; ++sp) {
+                    Vec3 spk_v = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * (8.0f + v_impact * 0.45f),
+                        2.5f + ((float)rand() / (float)RAND_MAX) * (5.0f + v_impact * 0.35f),
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * (8.0f + v_impact * 0.45f)
+                    );
+                    Vec4 spk_col = ((rand() % 4) == 0) ? vec4(1.0f, 1.0f, 0.95f, 1.0f) : vec4(1.0f, 0.72f, 0.12f, 0.95f);
+                    particle_spawn_ext(&ps, cp, spk_v, spk_col, 0.20f + ((float)rand() / (float)RAND_MAX) * 0.15f, 0.35f + ((float)rand() / (float)RAND_MAX) * 0.35f, true, 0.96f);
+                }
+
+                // 5. Fiery Explosion Flash & Friction Smoke
+                for (int fl = 0; fl < 8; ++fl) {
+                    Vec3 fl_v = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 4.0f,
+                        1.5f + ((float)rand() / (float)RAND_MAX) * 3.5f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 4.0f
+                    );
+                    particle_spawn_ext(&ps, cp, fl_v, vec4(1.0f, 0.45f, 0.08f, 0.90f), 0.75f + fl * 0.12f, 0.22f, false, 0.90f);
+                }
+                for (int sm = 0; sm < 14; ++sm) {
+                    Vec3 sm_v = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 3.5f,
+                        0.8f + ((float)rand() / (float)RAND_MAX) * 2.2f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 3.5f
+                    );
+                    particle_spawn_ext(&ps, cp, sm_v, vec4(0.85f, 0.85f, 0.88f, 0.65f), 0.95f, 0.85f, false, 0.92f);
+                }
+
+                // 6. Flying Shards (Carbon Fiber & Metal Debris)
+                int shard_count = 5 + (int)(v_impact * 0.5f);
+                if (shard_count > 16) shard_count = 16;
+                for (int sh = 0; sh < shard_count; ++sh) {
+                    Vec3 sh_v = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * (10.0f + v_impact * 0.5f),
+                        3.5f + ((float)rand() / (float)RAND_MAX) * (6.0f + v_impact * 0.4f),
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * (10.0f + v_impact * 0.5f)
+                    );
+                    Vec3 sh_ang = vec3(
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 30.0f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 30.0f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 30.0f
+                    );
+                    debris_spawn(debris_pool, ZERO_DEBRIS_SHARD, cp, sh_v, sh_ang, vec3(0.12f, 0.12f, 0.14f), 0.25f, 20.0f);
+                }
+
+                // 7. Dynamic Part Detachments (Front Splitter, Rear GT Wing, Hood Bonnet, Wheel)
+                int car_indices[2] = { ev->carA_index, ev->carB_index };
+                for (int c_idx = 0; c_idx < 2; ++c_idx) {
+                    int c = car_indices[c_idx];
+                    if (c < 0 || c >= ZERO_RACE_CAR_COUNT) continue;
+                    ZeroVehicleEnhanced *car = &game.cars[c];
+                    Mat4 car_rot = quat_to_mat4(car->orientation);
+                    Vec3 c_fwd = vec3(car_rot.m[8], car_rot.m[9], car_rot.m[10]);
+                    Vec3 to_cp = vec3_sub(cp, car->position);
+                    float dot_fwd = vec3_dot(to_cp, c_fwd);
+
+                    int col_id = (c == 0) ? gui.selected_car_idx : c;
+                    if (col_id < 0 || col_id >= 4) col_id = c % 4;
+                    Vec3 c_color = car_palette[col_id];
+
+                    // Front hit -> detach front splitter
+                    if (dot_fwd > 0.5f && !car_damage[c].lost_front_bumper) {
+                        car_damage[c].lost_front_bumper = true;
+                        Vec3 d_pos = vec3_add(car->position, vec3_scale(c_fwd, 2.2f));
+                        d_pos.y += 0.35f;
+                        Vec3 d_vel = vec3_add(car->velocity, vec3_scale(c_fwd, 6.0f + ((float)rand() / (float)RAND_MAX) * 4.0f));
+                        d_vel.y += 4.5f + ((float)rand() / (float)RAND_MAX) * 3.0f;
+                        Vec3 d_ang = vec3(
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 16.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 18.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 14.0f
+                        );
+                        debris_spawn(debris_pool, ZERO_DEBRIS_FRONT_SPLITTER, d_pos, d_vel, d_ang, c_color, 0.95f, 45.0f);
+                    }
+
+                    // Rear hit -> rip off rear GT wing
+                    if (dot_fwd < -0.5f && !car_damage[c].lost_rear_wing) {
+                        car_damage[c].lost_rear_wing = true;
+                        Vec3 d_pos = vec3_add(car->position, vec3_scale(c_fwd, -2.1f));
+                        d_pos.y += 0.95f;
+                        Vec3 d_vel = vec3_add(car->velocity, vec3_scale(c_fwd, -5.0f));
+                        d_vel.y += 6.5f + ((float)rand() / (float)RAND_MAX) * 4.0f;
+                        Vec3 d_ang = vec3(
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 20.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 20.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 18.0f
+                        );
+                        debris_spawn(debris_pool, ZERO_DEBRIS_REAR_WING, d_pos, d_vel, d_ang, c_color, 0.92f, 45.0f);
+                    }
+
+                    // High-energy impact -> eject hood panel
+                    if (ev->is_severe && v_impact > 10.0f && !car_damage[c].lost_hood) {
+                        car_damage[c].lost_hood = true;
+                        Vec3 d_pos = vec3_add(car->position, vec3_scale(c_fwd, 0.8f));
+                        d_pos.y += 0.65f;
+                        Vec3 d_vel = vec3_add(car->velocity, vec3(0.0f, 7.5f + ((float)rand() / (float)RAND_MAX) * 3.5f, 0.0f));
+                        Vec3 d_ang = vec3(
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 15.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 25.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 15.0f
+                        );
+                        debris_spawn(debris_pool, ZERO_DEBRIS_HOOD, d_pos, d_vel, d_ang, c_color, 0.85f, 45.0f);
+                    }
+
+                    // Extreme hyper impact -> wheel detachment
+                    if (v_impact > 18.0f && (rand() % 3 == 0)) {
+                        Vec3 d_pos = car->position;
+                        d_pos.y += 0.35f;
+                        Vec3 d_vel = vec3_add(car->velocity, vec3(
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 8.0f,
+                            4.5f + ((float)rand() / (float)RAND_MAX) * 3.0f,
+                            ((float)rand() / (float)RAND_MAX - 0.5f) * 8.0f
+                        ));
+                        Vec3 d_ang = vec3(35.0f, 0.0f, 0.0f);
+                        debris_spawn(debris_pool, ZERO_DEBRIS_WHEEL, d_pos, d_vel, d_ang, vec3(0.2f, 0.2f, 0.2f), 0.35f, 45.0f);
+                    }
+                }
+            }
+
+            // Barrier Collision Spark Particles & High-Speed Wall Smashes
             int p_node = 0; float p_t = 0.0f; float p_dist_sq = 0.0f;
             zero_track_find_nearest_segment(pcar->position, &p_node, &p_t, &p_dist_sq);
             float p_dist = sqrtf(p_dist_sq);
             if (p_dist > (ZERO_TRACK_BARRIER_DIST - 1.45f) && pcar->speed_kmh > 20.0f) {
-                for (int sp = 0; sp < 4; ++sp) {
+                float b_spd = pcar->speed_kmh / 3.6f;
+                int b_sparks = (int)(12.0f + b_spd * 1.5f);
+                if (b_sparks > 45) b_sparks = 45;
+                for (int sp = 0; sp < b_sparks; ++sp) {
                     Vec3 spk_pos = pcar->position;
-                    spk_pos.y += 0.25f + ((float)rand() / (float)RAND_MAX) * 0.4f;
+                    spk_pos.y += 0.25f + ((float)rand() / (float)RAND_MAX) * 0.45f;
                     Vec3 spk_vel = vec3(
-                        ((float)rand() / (float)RAND_MAX - 0.5f) * 6.0f,
-                        1.5f + (float)rand() / (float)RAND_MAX * 3.5f,
-                        ((float)rand() / (float)RAND_MAX - 0.5f) * 6.0f
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 8.0f,
+                        2.0f + (float)rand() / (float)RAND_MAX * 4.5f,
+                        ((float)rand() / (float)RAND_MAX - 0.5f) * 8.0f
                     );
-                    particle_spawn(&ps, spk_pos, spk_vel, vec4(1.0f, 0.75f, 0.15f, 0.95f), 0.22f, 0.35f);
+                    particle_spawn_ext(&ps, spk_pos, spk_vel, vec4(1.0f, 0.80f, 0.15f, 0.95f), 0.22f, 0.38f, true, 0.96f);
+                }
+                if (b_spd > 12.0f) {
+                    audio_params.trigger_crash = true;
+                    audio_params.crash_intensity = fminf(1.8f, b_spd / 14.0f);
+                    camera_shake_trauma = fminf(1.0f, camera_shake_trauma + 0.35f);
+                    track_rupture_spawn(ruptures, pcar->position, 1.4f);
                 }
             }
+
+            // Debris and Track Rupture Simulation Update
+            debris_system_update(debris_pool, &ps, &game, dt);
+            track_rupture_update(ruptures, dt);
 
             // Check race completion
             if (game.race_finished) {
@@ -833,11 +1362,20 @@ int main(void) {
                                 game.cars[0].steer_input,
                                 dt);
         Mat4 view = zero_race_camera_get_view(&rcam);
+        if (camera_shake_trauma > 0.001f) {
+            float sq_trauma = camera_shake_trauma * camera_shake_trauma;
+            float shake_x = (sinf((float)cur_time * 52.0f) * 0.35f + sinf((float)cur_time * 83.0f) * 0.15f) * sq_trauma;
+            float shake_y = (cosf((float)cur_time * 61.0f) * 0.28f + cosf((float)cur_time * 94.0f) * 0.12f) * sq_trauma;
+            float shake_rot = sinf((float)cur_time * 73.0f) * 0.06f * sq_trauma;
+            Mat4 shake_t = mat4_translate(vec3(shake_x, shake_y, 0.0f));
+            Mat4 shake_r = quat_to_mat4(quat_from_axis_angle(vec3(0, 0, 1), shake_rot));
+            view = mat4_mul(shake_r, mat4_mul(shake_t, view));
+            camera_shake_trauma -= dt * 1.6f;
+            if (camera_shake_trauma < 0.0f) camera_shake_trauma = 0.0f;
+        }
         Mat4 proj = zero_race_camera_get_projection(&rcam);
 
         // Audio Update
-        ZeroAudioParams audio_params;
-        memset(&audio_params, 0, sizeof(audio_params));
         audio_params.engine_rpm = game.cars[0].engine_rpm;
         audio_params.throttle = game.cars[0].throttle_input;
         audio_params.vehicle_speed_kmh = game.cars[0].speed_kmh;
@@ -954,6 +1492,29 @@ int main(void) {
             zero_shader_set_float(&shader, "u_material_mode", 0.0f);
             zero_mesh_draw(&car_mesh);
 
+            // Dynamic Aero Components (drawn only if still intact)
+            if (!car_damage[k].lost_front_bumper) {
+                Mat4 sp_mat = mat4_mul(car->transform, mat4_translate(vec3(0.0f, -0.05f, 2.15f)));
+                zero_shader_set_mat4(&shader, "u_model", sp_mat);
+                zero_shader_set_float(&shader, "u_material_mode", 11.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", body_color);
+                zero_mesh_draw(&front_splitter_mesh);
+            }
+            if (!car_damage[k].lost_rear_wing) {
+                Mat4 rw_mat = mat4_mul(car->transform, mat4_translate(vec3(0.0f, 0.85f, -1.95f)));
+                zero_shader_set_mat4(&shader, "u_model", rw_mat);
+                zero_shader_set_float(&shader, "u_material_mode", 11.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", body_color);
+                zero_mesh_draw(&rear_wing_mesh);
+            }
+            if (!car_damage[k].lost_hood) {
+                Mat4 hd_mat = mat4_mul(car->transform, mat4_translate(vec3(0.0f, 0.48f, 1.10f)));
+                zero_shader_set_mat4(&shader, "u_model", hd_mat);
+                zero_shader_set_float(&shader, "u_material_mode", 0.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", body_color);
+                zero_mesh_draw(&hood_mesh);
+            }
+
             // 4 Wheels with Rubber Tires, Alloy Rims, Red Calipers
             for (int w = 0; w < 4; ++w) {
                 ZeroWheel *wh = &car->wheels[w];
@@ -976,6 +1537,53 @@ int main(void) {
                 zero_mesh_draw(&wheel_mesh);
             }
         }
+
+        // 4. Render Dynamic Track Debris Littered on Track (Bumpers, Wings, Hoods, Wheels, Shards)
+        for (int i = 0; i < MAX_TRACK_DEBRIS; ++i) {
+            if (!debris_pool[i].active) continue;
+            ZeroTrackDebris *d = &debris_pool[i];
+            Mat4 d_t = mat4_translate(d->pos);
+            Mat4 d_r = quat_to_mat4(d->rot);
+            Mat4 d_mat = mat4_mul(d_t, d_r);
+            zero_shader_set_mat4(&shader, "u_model", d_mat);
+
+            if (d->type == ZERO_DEBRIS_FRONT_SPLITTER) {
+                zero_shader_set_float(&shader, "u_material_mode", 11.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", d->color);
+                zero_mesh_draw(&front_splitter_mesh);
+            } else if (d->type == ZERO_DEBRIS_REAR_WING) {
+                zero_shader_set_float(&shader, "u_material_mode", 11.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", d->color);
+                zero_mesh_draw(&rear_wing_mesh);
+            } else if (d->type == ZERO_DEBRIS_HOOD) {
+                zero_shader_set_float(&shader, "u_material_mode", 0.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", d->color);
+                zero_mesh_draw(&hood_mesh);
+            } else if (d->type == ZERO_DEBRIS_WHEEL) {
+                zero_shader_set_float(&shader, "u_material_mode", 6.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", vec3(0.88f, 0.90f, 0.94f));
+                zero_mesh_draw(&wheel_mesh);
+            } else if (d->type == ZERO_DEBRIS_SHARD) {
+                zero_shader_set_float(&shader, "u_material_mode", 11.0f);
+                zero_shader_set_vec3(&shader, "u_object_color", d->color);
+                zero_mesh_draw(&shard_mesh);
+            }
+        }
+
+        // 5. Render Track Rupture Ground Decal Craters
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        zero_shader_set_float(&shader, "u_material_mode", 10.0f);
+        for (int i = 0; i < MAX_TRACK_RUPTURES; ++i) {
+            if (!ruptures[i].active) continue;
+            Mat4 r_t = mat4_translate(ruptures[i].pos);
+            Mat4 r_s = mat4_scale(vec3(ruptures[i].radius * 2.0f, 1.0f, ruptures[i].radius * 2.0f));
+            Mat4 r_mat = mat4_mul(r_t, r_s);
+            zero_shader_set_mat4(&shader, "u_model", r_mat);
+            zero_shader_set_float(&shader, "u_roughness", ruptures[i].intensity);
+            zero_mesh_draw(&rupture_quad);
+        }
+        glDisable(GL_BLEND);
 
         // 4. Render Particle System (Camera-facing billboard quads with blending)
         glEnable(GL_BLEND);
@@ -1056,6 +1664,11 @@ int main(void) {
     zero_mesh_destroy(&sky_sphere);
     zero_mesh_destroy(&shadow_quad);
     zero_mesh_destroy(&ps.quad_mesh);
+    zero_mesh_destroy(&rupture_quad);
+    zero_mesh_destroy(&shard_mesh);
+    zero_mesh_destroy(&front_splitter_mesh);
+    zero_mesh_destroy(&rear_wing_mesh);
+    zero_mesh_destroy(&hood_mesh);
     zero_shader_destroy(&shader);
     zero_arena_destroy(&arena);
     zero_platform_shutdown(&platform);
