@@ -358,18 +358,18 @@ void zero_vehicle_resolve_barrier_collision(ZeroVehicleEnhanced *car, ZeroGround
     }
 
     if (pen > 0.0f) {
-        car->position.x += wall_nx * (pen + 0.15f);
-        car->position.z += wall_nz * (pen + 0.15f);
+        car->position.x += wall_nx * (pen + 0.30f);
+        car->position.z += wall_nz * (pen + 0.30f);
 
         float vn = car->velocity.x * wall_nx + car->velocity.z * wall_nz;
-        float restitution = 0.50f;
+        float restitution = 0.85f;
         float new_vn = fabsf(vn) * restitution;
-        if (new_vn < 2.5f) new_vn = 2.5f;
+        if (new_vn < 5.0f) new_vn = 5.0f;
 
         float wall_tx = -wall_nz;
         float wall_tz = wall_nx;
         float vt = car->velocity.x * wall_tx + car->velocity.z * wall_tz;
-        vt *= 0.96f;
+        vt *= 0.98f;
 
         car->velocity.x = wall_nx * new_vn + wall_tx * vt;
         car->velocity.z = wall_nz * new_vn + wall_tz * vt;
@@ -378,7 +378,7 @@ void zero_vehicle_resolve_barrier_collision(ZeroVehicleEnhanced *car, ZeroGround
         Vec3 fwd = vec3(ch_rot.m[8], ch_rot.m[9], ch_rot.m[10]);
         float fwd_dot_wall = fwd.x * wall_nx + fwd.z * wall_nz;
         if (fwd_dot_wall < 0.0f) {
-            float deflect_torque = (wall_nx * fwd.z - wall_nz * fwd.x) * 3.5f;
+            float deflect_torque = (wall_nx * fwd.z - wall_nz * fwd.x) * 5.5f;
             car->angular_velocity.y = deflect_torque;
         } else {
             car->angular_velocity.y *= 0.70f;
