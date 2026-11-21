@@ -50,6 +50,14 @@ ZeroVehicle zero_vehicle_create(Vec3 spawn_pos) {
 
     car.gear = 1;
     car.engine_rpm = 1000.0f;
+
+    // Aerodynamics Subsystem Coefficients
+    car.aero_drag_coeff = 0.32f * 2.2f;       // CD * Frontal Area
+    car.aero_front_downforce = 1.15f;         // Front splitter downforce
+    car.aero_rear_downforce = 1.65f;          // Active rear wing downforce
+    car.aero_diffuser_factor = 0.85f;         // Ground-effect underbody suction
+    car.aero_airbrake_active = 0.0f;          // Retracted initially
+
     return car;
 }
 
@@ -167,16 +175,48 @@ void zero_vehicle_update(ZeroVehicle *car, float dt, ZeroGroundHeightFn ground_f
             }
         }
 
-        // Aerodynamic drag & downforce (increased downforce glues car to road at speed)
+        // Advanced Multi-Element Aerodynamics Simulation
         float speed = vec3_length(car->velocity);
-        Vec3 drag = vec3_scale(car->velocity, -0.5f * 1.225f * 0.32f * 2.2f * speed);
-        total_force = vec3_add(total_force, drag);
+        float rho = 1.225f; // Sea-level air density (kg/m^3)
+        float dynamic_pressure = 0.5f * rho * speed * speed;
 
-        Vec3 downforce = vec3_scale(up, -0.5f * 1.225f * 2.20f * speed * speed);
-        total_force = vec3_add(total_force, downforce);
+        // Dynamic Active Airbrake: deploys when braking at speeds > 40 km/h
+        float target_airbrake = (car->brake_input > 0.3f && speed > 11.0f) ? 1.0f : 0.0f;
+        car->aero_airbrake_active += (target_airbrake - car->aero_airbrake_active) * sub_dt * 6.0f;
 
-        // Angular yaw damping (stabilizes heading so it doesn't spin uncontrollably like ice)
-        total_torque = vec3_sub(total_torque, vec3_scale(car->angular_velocity, 280.0f));
+        // 1. Aerodynamic Drag Polar (increases when airbrake is deployed)
+        float effective_drag_coeff = car->aero_drag_coeff * (1.0f + 0.85f * car->aero_airbrake_active);
+        if (speed > 1e-4f) {
+            Vec3 drag = vec3_scale(car->velocity, -0.5f * rho * effective_drag_coeff * speed);
+            total_force = vec3_add(total_force, drag);
+        }
+
+        // 2. Front Splitter Downforce: Applied at front axle (+Z)
+        float f_downforce_front = dynamic_pressure * car->aero_front_downforce;
+        Vec3 front_aero_pos = rotate_vector_quat(car->orientation, vec3(0.0f, 0.0f, 1.35f));
+        Vec3 front_aero_force = vec3_scale(up, -f_downforce_front);
+        total_force = vec3_add(total_force, front_aero_force);
+        total_torque = vec3_add(total_torque, vec3_cross(front_aero_pos, front_aero_force));
+
+        // 3. Active Rear Wing Downforce: Applied at rear spoiler (-Z), augmented by airbrake angle
+        float wing_coeff = car->aero_rear_downforce * (1.0f + 0.65f * car->aero_airbrake_active);
+        float f_downforce_rear = dynamic_pressure * wing_coeff;
+        Vec3 rear_aero_pos = rotate_vector_quat(car->orientation, vec3(0.0f, 0.45f, -1.30f));
+        Vec3 rear_aero_force = vec3_scale(up, -f_downforce_rear);
+        total_force = vec3_add(total_force, rear_aero_force);
+        total_torque = vec3_add(total_torque, vec3_cross(rear_aero_pos, rear_aero_force));
+
+        // 4. Ground-Effect Diffuser Suction: Scales inversely with underbody ride height
+        float avg_susp_length = 0.0f;
+        for (int k = 0; k < 4; ++k) avg_susp_length += car->wheels[k].current_length;
+        avg_susp_length *= 0.25f;
+        float ground_effect_mult = 0.35f / (avg_susp_length > 0.08f ? avg_susp_length : 0.08f);
+        if (ground_effect_mult > 3.0f) ground_effect_mult = 3.0f;
+        float f_diffuser = dynamic_pressure * car->aero_diffuser_factor * ground_effect_mult;
+        total_force = vec3_add(total_force, vec3_scale(up, -f_diffuser));
+
+        // High-Speed Pitch and Yaw Aerodynamic Stabilization
+        total_torque = vec3_sub(total_torque, vec3_scale(car->angular_velocity, 280.0f + speed * 15.0f));
 
         // Integration
         Vec3 accel = vec3_scale(total_force, 1.0f / car->mass);

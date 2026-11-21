@@ -48,6 +48,13 @@ typedef struct ZeroVehicle {
     int gear;
     float drift_angle;
     bool is_drifting;
+
+    // Advanced Aerodynamics Subsystem
+    float aero_drag_coeff;       // CD * frontal area (default: 0.32 * 2.2 m^2)
+    float aero_front_downforce;  // Front splitter downforce coefficient
+    float aero_rear_downforce;   // Active rear wing downforce coefficient
+    float aero_diffuser_factor;  // Ground-effect underbody suction
+    float aero_airbrake_active;  // Dynamic spoiler airbrake deployment (0.0 to 1.0)
 } ZeroVehicle;
 
 typedef float (*ZeroGroundHeightFn)(float x, float z, Vec3 *out_normal);

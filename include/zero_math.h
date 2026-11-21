@@ -77,8 +77,12 @@ static ZERO_FORCE_INLINE Vec3 vec3_cross(Vec3 a, Vec3 b) {
     );
 }
 
+static ZERO_FORCE_INLINE float vec3_length_sq(Vec3 v) {
+    return vec3_dot(v, v);
+}
+
 static ZERO_FORCE_INLINE float vec3_length(Vec3 v) {
-    return sqrtf(vec3_dot(v, v));
+    return sqrtf(vec3_length_sq(v));
 }
 
 static ZERO_FORCE_INLINE Vec3 vec3_normalize(Vec3 v) {
@@ -273,6 +277,11 @@ static ZERO_FORCE_INLINE Quat quat_mul(Quat a, Quat b) {
         a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
     };
     return q;
+}
+
+static ZERO_FORCE_INLINE Quat quat_conjugate(Quat q) {
+    Quat res = {-q.x, -q.y, -q.z, q.w};
+    return res;
 }
 
 static ZERO_FORCE_INLINE float quat_dot(Quat a, Quat b) {

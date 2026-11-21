@@ -9,6 +9,8 @@
 #include "zero_image.h"
 #include "zero_obj.h"
 #include "zero_zmesh.h"
+#include "zero_vehicle.h"
+#include "zero_physics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -294,6 +296,149 @@ static void test_platform_headless(void) {
     zero_platform_shutdown(&state);
 }
 
+static void test_physics_broadphase_dynamic_tree(void) {
+    ZeroDynamicAABBTree tree = zero_aabb_tree_create(16);
+    TEST_ASSERT(tree.nodes != NULL, "AABB tree nodes allocated");
+    TEST_ASSERT(tree.count == 0, "Initial AABB tree count is 0");
+
+    ZeroAABB box1 = zero_aabb_create(vec3(-1, -1, -1), vec3(1, 1, 1));
+    ZeroAABB box2 = zero_aabb_create(vec3(0.5f, 0.5f, 0.5f), vec3(2, 2, 2));
+    ZeroAABB box3 = zero_aabb_create(vec3(10, 10, 10), vec3(12, 12, 12));
+
+    TEST_ASSERT(zero_aabb_intersects(box1, box2), "Box 1 and Box 2 must intersect");
+    TEST_ASSERT(!zero_aabb_intersects(box1, box3), "Box 1 and Box 3 must not intersect");
+
+    int id1 = zero_aabb_tree_insert(&tree, box1, 101);
+    int id2 = zero_aabb_tree_insert(&tree, box2, 102);
+    int id3 = zero_aabb_tree_insert(&tree, box3, 103);
+    TEST_ASSERT(id1 >= 0 && id2 >= 0 && id3 >= 0, "AABB tree inserted 3 valid node IDs");
+    TEST_ASSERT(tree.leaf_count == 3, "AABB tree leaf count should be 3");
+
+    zero_aabb_tree_update(&tree, id1, zero_aabb_create(vec3(9.5f, 9.5f, 9.5f), vec3(11.5f, 11.5f, 11.5f)), vec3(0, 0, 0));
+    TEST_ASSERT(tree.leaf_count == 3, "AABB tree leaf count after update is 3");
+
+    zero_aabb_tree_remove(&tree, id2);
+    TEST_ASSERT(tree.leaf_count == 2, "AABB tree leaf count after removal is 2");
+
+    zero_aabb_tree_destroy(&tree);
+    TEST_ASSERT(tree.nodes == NULL, "AABB tree freed successfully");
+}
+
+static void test_physics_gjk_epa_narrowphase(void) {
+    // 1. Two intersecting spheres
+    ZeroCollider col_sphere1 = {.type = ZERO_COLLIDER_SPHERE, .sphere = {.radius = 1.0f}};
+    ZeroCollider col_sphere2 = {.type = ZERO_COLLIDER_SPHERE, .sphere = {.radius = 1.0f}};
+    Vec3 posA = vec3(0, 0, 0);
+    Vec3 posB = vec3(1.5f, 0, 0);
+    Quat rot = quat_identity();
+
+    Vec3 simplex[4];
+    int simplex_count = 0;
+    bool hit = zero_gjk_intersection(&col_sphere1, posA, rot, &col_sphere2, posB, rot, simplex, &simplex_count);
+    TEST_ASSERT(hit, "Overlapping spheres must report GJK intersection");
+
+    Vec3 normal, contact_pt;
+    float depth = 0.0f;
+    bool epa_ok = zero_epa_penetration(&col_sphere1, posA, rot, &col_sphere2, posB, rot, simplex, simplex_count, &normal, &depth, &contact_pt);
+    TEST_ASSERT(epa_ok, "EPA penetration calculation must succeed");
+    TEST_ASSERT(depth > 0.0f, "EPA penetration depth must be positive");
+
+    // 2. Non-intersecting spheres
+    Vec3 pos_far = vec3(5.0f, 0, 0);
+    bool hit_far = zero_gjk_intersection(&col_sphere1, posA, rot, &col_sphere2, pos_far, rot, simplex, &simplex_count);
+    TEST_ASSERT(!hit_far, "Separated spheres must not intersect in GJK");
+
+    // 3. Box vs Box
+    ZeroCollider col_box1 = {.type = ZERO_COLLIDER_BOX, .box = {.half_extents = vec3(1, 1, 1)}};
+    ZeroCollider col_box2 = {.type = ZERO_COLLIDER_BOX, .box = {.half_extents = vec3(1, 1, 1)}};
+    Vec3 pos_box_b = vec3(1.2f, 0, 0);
+    bool hit_box = zero_gjk_intersection(&col_box1, posA, rot, &col_box2, pos_box_b, rot, simplex, &simplex_count);
+    TEST_ASSERT(hit_box, "Overlapping oriented boxes must intersect in GJK");
+}
+
+static void test_physics_ccd_raycast(void) {
+    ZeroPhysicsWorld world = zero_physics_world_create();
+
+    ZeroRigidBody target;
+    memset(&target, 0, sizeof(target));
+    target.position = vec3(0, 0, 10.0f);
+    target.collider.type = ZERO_COLLIDER_SPHERE;
+    target.collider.sphere.radius = 2.0f;
+    target.is_static = true;
+    zero_physics_add_body(&world, &target);
+
+    float hit_dist = 0.0f;
+    Vec3 hit_normal;
+    uint32_t hit_id = 0;
+    bool hit = zero_physics_raycast(&world, vec3(0, 0, 0), vec3(0, 0, 1), 20.0f, &hit_dist, &hit_normal, &hit_id);
+    TEST_ASSERT(hit, "Raycast along +Z must hit target sphere");
+    TEST_ASSERT(fabsf(hit_dist - 8.0f) < 0.05f, "Hit distance must equal position.z - radius (10 - 2 = 8)");
+    TEST_ASSERT(hit_normal.z < -0.9f, "Hit normal must oppose ray direction (-Z)");
+
+    bool miss = zero_physics_raycast(&world, vec3(0, 0, 0), vec3(1, 0, 0), 20.0f, &hit_dist, &hit_normal, &hit_id);
+    TEST_ASSERT(!miss, "Perpendicular raycast must miss");
+
+    zero_physics_world_destroy(&world);
+}
+
+static void test_physics_xpbd_simulation(void) {
+    ZeroPhysicsWorld world = zero_physics_world_create();
+
+    // Static ground plane / box
+    ZeroRigidBody ground;
+    memset(&ground, 0, sizeof(ground));
+    ground.position = vec3(0, -1.0f, 0);
+    ground.collider.type = ZERO_COLLIDER_BOX;
+    ground.collider.box.half_extents = vec3(50, 1, 50);
+    ground.is_static = true;
+    zero_physics_add_body(&world, &ground);
+
+    // Dynamic falling box
+    ZeroRigidBody box;
+    memset(&box, 0, sizeof(box));
+    box.position = vec3(0, 5.0f, 0);
+    box.mass = 10.0f;
+    box.collider.type = ZERO_COLLIDER_BOX;
+    box.collider.box.half_extents = vec3(0.5f, 0.5f, 0.5f);
+    box.restitution = 0.0f;
+    ZeroRigidBody *sim_box = zero_physics_add_body(&world, &box);
+
+    TEST_ASSERT(sim_box != NULL, "Dynamic rigid body added");
+
+    // Step simulation for 60 frames (1 second at 60 Hz)
+    for (int i = 0; i < 60; ++i) {
+        zero_physics_step(&world, 1.0f / 60.0f);
+    }
+
+    // Box should have fallen under gravity and rested stably on top of ground (ground top = 0.0, box bottom = 0.0 -> box pos.y ~ 0.5)
+    TEST_ASSERT(sim_box->position.y >= 0.40f && sim_box->position.y <= 0.65f, "Rigid body rested stably on ground without sinking");
+
+    char json_buf[1024];
+    int json_len = zero_physics_inspect_scene(&world, json_buf, sizeof(json_buf));
+    TEST_ASSERT(json_len > 0, "Semantic scene snapshot generated");
+    TEST_ASSERT(strstr(json_buf, "\"body_count\": 2") != NULL, "Snapshot reports correct body count");
+
+    zero_physics_world_destroy(&world);
+}
+
+static void test_vehicle_advanced_aerodynamics(void) {
+    ZeroVehicle car = zero_vehicle_create(vec3(0, 2.0f, 0));
+    TEST_ASSERT(car.aero_drag_coeff > 0.0f, "Aero drag coefficient initialized");
+    TEST_ASSERT(car.aero_front_downforce > 0.0f, "Front splitter downforce initialized");
+    TEST_ASSERT(car.aero_rear_downforce > 0.0f, "Active rear wing downforce initialized");
+    TEST_ASSERT(car.aero_diffuser_factor > 0.0f, "Underbody diffuser factor initialized");
+
+    // Test high speed aero: set vehicle velocity forward at 180 km/h (50 m/s)
+    car.velocity = vec3(0, 0, 50.0f);
+    car.brake_input = 1.0f; // Engage active airbrake
+
+    zero_vehicle_update(&car, 1.0f / 60.0f, NULL);
+    TEST_ASSERT(car.aero_airbrake_active > 0.0f, "Active airbrake deploys under high-speed braking");
+
+    float speed_after = vec3_length(car.velocity);
+    TEST_ASSERT(speed_after < 50.0f, "Aerodynamic drag and brakes decelerate vehicle");
+}
+
 int main(int argc, char **argv) {
     bool run_windowed = false;
     for (int i = 1; i < argc; ++i) {
@@ -302,7 +447,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("=== ZERO ENGINE: PHASE 1, 2, 3 VERIFICATION SUITE ===\n");
+    printf("=== ZERO ENGINE: COMPLETE VERIFICATION SUITE (PHASES 1 - 4) ===\n");
     test_memory_arena();
     test_math_vectors_matrices();
     test_math_dual_quaternions();
@@ -313,6 +458,11 @@ int main(int argc, char **argv) {
     test_image_loaders();
     test_zmesh_binary_mmap();
     test_platform_headless();
+    test_physics_broadphase_dynamic_tree();
+    test_physics_gjk_epa_narrowphase();
+    test_physics_ccd_raycast();
+    test_physics_xpbd_simulation();
+    test_vehicle_advanced_aerodynamics();
 
     if (run_windowed) {
         printf("Running windowed platform verification...\n");
