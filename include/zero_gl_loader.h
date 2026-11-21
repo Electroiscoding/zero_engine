@@ -35,6 +35,26 @@ typedef void (*PFNGLUNIFORMMATRIX4FVPROC)(GLint location, GLsizei count, GLboole
 typedef void (*PFNGLUNIFORM3FPROC)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
 typedef void (*PFNGLUNIFORM1FPROC)(GLint location, GLfloat v0);
 
+/* Framebuffer dispatch */
+typedef void (*PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint *framebuffers);
+typedef void (*PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
+typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+typedef GLenum (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum target);
+typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint *framebuffers);
+typedef void (*PFNGLDRAWBUFFERSPROC)(GLsizei n, const GLenum *bufs);
+typedef void (*PFNGLDRAWBUFFERPROC)(GLenum buf);
+typedef void (*PFNGLREADBUFFERPROC)(GLenum src);
+
+/* Texture units & parameters */
+typedef void (*PFNGLACTIVETEXTUREPROC)(GLenum texture);
+typedef void (*PFNGLTEXPARAMETERFVPROC)(GLenum target, GLenum pname, const GLfloat *params);
+
+/* Additional uniform setters */
+typedef void (*PFNGLUNIFORM1IPROC)(GLint location, GLint v0);
+typedef void (*PFNGLUNIFORM1IVPROC)(GLint location, GLsizei count, const GLint *value);
+typedef void (*PFNGLUNIFORM1FVPROC)(GLint location, GLsizei count, const GLfloat *value);
+typedef void (*PFNGLUNIFORM3FVPROC)(GLint location, GLsizei count, const GLfloat *value);
+
 typedef struct ZeroGL {
     PFNGLCREATESHADERPROC glCreateShader;
     PFNGLSHADERSOURCEPROC glShaderSource;
@@ -66,6 +86,26 @@ typedef struct ZeroGL {
     PFNGLUNIFORMMATRIX4FVPROC glUniformMatrix4fv;
     PFNGLUNIFORM3FPROC glUniform3f;
     PFNGLUNIFORM1FPROC glUniform1f;
+
+    /* Framebuffers */
+    PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers;
+    PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer;
+    PFNGLFRAMEBUFFERTEXTURE2DPROC glFramebufferTexture2D;
+    PFNGLCHECKFRAMEBUFFERSTATUSPROC glCheckFramebufferStatus;
+    PFNGLDELETEFRAMEBUFFERSPROC glDeleteFramebuffers;
+    PFNGLDRAWBUFFERSPROC glDrawBuffers;
+    PFNGLDRAWBUFFERPROC glDrawBuffer;
+    PFNGLREADBUFFERPROC glReadBuffer;
+
+    /* Texture Units & Parameters */
+    PFNGLACTIVETEXTUREPROC glActiveTexture;
+    PFNGLTEXPARAMETERFVPROC glTexParameterfv;
+
+    /* Uniforms */
+    PFNGLUNIFORM1IPROC glUniform1i;
+    PFNGLUNIFORM1IVPROC glUniform1iv;
+    PFNGLUNIFORM1FVPROC glUniform1fv;
+    PFNGLUNIFORM3FVPROC glUniform3fv;
 } ZeroGL;
 
 extern ZeroGL zgl;

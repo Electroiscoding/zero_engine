@@ -11,6 +11,10 @@
 #include "zero_zmesh.h"
 #include "zero_vehicle.h"
 #include "zero_physics.h"
+#include "zero_csm.h"
+#include "zero_sky.h"
+#include "zero_scene.h"
+#include "zero_inspect.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -439,6 +443,104 @@ static void test_vehicle_advanced_aerodynamics(void) {
     TEST_ASSERT(speed_after < 50.0f, "Aerodynamic drag and brakes decelerate vehicle");
 }
 
+static void test_csm_cascades_and_math(void) {
+    float splits[ZERO_CSM_CASCADE_COUNT];
+    zero_csm_calculate_splits(0.1f, 150.0f, 0.75f, splits);
+
+    TEST_ASSERT(splits[0] > 0.1f, "Split 0 must be greater than near plane");
+    TEST_ASSERT(splits[1] > splits[0], "Split 1 must be strictly greater than Split 0");
+    TEST_ASSERT(splits[2] > splits[1], "Split 2 must be strictly greater than Split 1");
+    TEST_ASSERT(fabsf(splits[2] - 150.0f) < 1.0f, "Final split must equal max distance");
+
+    ZeroCamera cam = zero_camera_create(vec3(0, 5, 0), 60.0f, 16.0f / 9.0f, 0.1f, 150.0f);
+    Vec3 center;
+    float radius;
+    zero_csm_calculate_bounding_sphere(&cam, splits[0], splits[1], &center, &radius);
+    TEST_ASSERT(radius > 0.0f, "Cascade bounding sphere radius must be positive");
+
+    Mat4 light_vp = zero_csm_calculate_light_matrix(center, radius, vec3(0.5f, 0.8f, 0.3f), 1024, 50.0f);
+    TEST_ASSERT(fabsf(light_vp.m[15] - 1.0f) < 1e-4f, "Orthographic light projection matrix has m[15] == 1");
+
+    const char *vert_src = zero_csm_depth_vert();
+    const char *frag_src = zero_csm_depth_frag();
+    TEST_ASSERT(vert_src != NULL && strstr(vert_src, "u_light_view_proj") != NULL, "CSM depth vert shader source valid");
+    TEST_ASSERT(frag_src != NULL, "CSM depth frag shader source valid");
+}
+
+static void test_sky_atmosphere_scattering(void) {
+    Vec3 sun_dir_noon = zero_sky_calc_sun_direction(30.0f, 120.0f, 0.409f);
+    TEST_ASSERT(fabsf(vec3_length(sun_dir_noon) - 1.0f) < 1e-4f, "Sun direction must be a unit vector");
+
+    ZeroSkyPhase phase_noon = zero_sky_calc_phase(sun_dir_noon.y);
+    TEST_ASSERT(phase_noon == ZERO_SKY_MIDDAY || phase_noon == ZERO_SKY_GOLDEN_HOUR, "Noon sun elevation must map to daytime phase");
+
+    Vec3 sun_col, ambient, zenith, horizon;
+    zero_sky_calc_colors(0.8f, &sun_col, &ambient, &zenith, &horizon);
+    TEST_ASSERT(zenith.z > zenith.x, "Daytime zenith must be predominantly blue (Rayleigh scattering)");
+    TEST_ASSERT(sun_col.x > 0.5f, "Sun color must be bright");
+
+    zero_sky_calc_colors(0.05f, &sun_col, &ambient, &zenith, &horizon);
+    TEST_ASSERT(horizon.x > horizon.z, "Golden hour horizon must be warm/red shifted");
+
+    const char *sky_vert = zero_sky_shader_vert();
+    const char *sky_frag = zero_sky_shader_frag();
+    TEST_ASSERT(sky_vert != NULL && strstr(sky_vert, "a_pos") != NULL, "Sky dome vert shader valid");
+    TEST_ASSERT(sky_frag != NULL && strstr(sky_frag, "u_sun_dir") != NULL, "Sky dome frag shader valid");
+}
+
+static void test_scene_graph_hierarchy(void) {
+    ZeroScene *scene = zero_scene_create("test_world");
+    TEST_ASSERT(scene != NULL, "Scene created successfully");
+    TEST_ASSERT(scene->entity_count == 0, "Initial entity count is 0");
+
+    ZeroEntity *root = zero_entity_spawn_empty(scene, "root_node");
+    TEST_ASSERT(root != NULL, "Root entity spawned");
+    zero_entity_set_position(root, vec3(10.0f, 0.0f, 0.0f));
+    TEST_ASSERT(root->parent_id == -1, "Root parent is -1");
+
+    ZeroEntity *child = zero_entity_spawn_empty(scene, "child_node");
+    TEST_ASSERT(child != NULL, "Child entity spawned");
+    zero_entity_set_position(child, vec3(0.0f, 5.0f, 0.0f));
+
+    bool reparent_ok = zero_entity_attach_child(scene, root->id, child->id);
+    TEST_ASSERT(reparent_ok, "Attaching child to root succeeded");
+
+    zero_scene_update_transforms(scene);
+
+    TEST_ASSERT(fabsf(child->world_pos.x - 10.0f) < 1e-4f, "Child inherits root X translation (10)");
+    TEST_ASSERT(fabsf(child->world_pos.y - 5.0f) < 1e-4f, "Child preserves local Y offset (5)");
+
+    zero_scene_destroy(scene);
+}
+
+static void test_inspect_headless_perception(void) {
+    ZeroScene *scene = zero_scene_create("perception_world");
+    TEST_ASSERT(scene != NULL, "Perception scene created");
+
+    scene->camera = zero_camera_create(vec3(0.0f, 1.8f, -4.0f), 60.0f, 16.0f / 9.0f, 0.1f, 1000.0f);
+    scene->camera.forward = vec3(0.0f, 0.0f, 1.0f);
+
+    ZeroEntity *player = zero_entity_spawn_humanoid(scene, vec3(0.0f, 1.0f, 4.0f));
+    TEST_ASSERT(player != NULL, "Player humanoid entity spawned");
+
+    zero_scene_update_transforms(scene);
+
+    char json_buf[4096];
+    int len = zero_engine_inspect_scene(scene, json_buf, sizeof(json_buf));
+    TEST_ASSERT(len > 0, "JSON inspection snapshot produced");
+    TEST_ASSERT(strstr(json_buf, "\"camera\"") != NULL, "JSON contains camera block");
+    TEST_ASSERT(strstr(json_buf, "\"visible_entities\"") != NULL, "JSON contains visible entities array");
+    TEST_ASSERT(strstr(json_buf, "\"player\"") != NULL, "JSON contains player entity id");
+
+    // Test headless determinism across 100 simulation ticks
+    for (int t = 0; t < 100; ++t) {
+        zero_scene_step(scene, 1.0f / 60.0f);
+    }
+    TEST_ASSERT(scene->tick == 100, "Scene deterministically advanced 100 ticks");
+
+    zero_scene_destroy(scene);
+}
+
 int main(int argc, char **argv) {
     bool run_windowed = false;
     for (int i = 1; i < argc; ++i) {
@@ -447,7 +549,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("=== ZERO ENGINE: COMPLETE VERIFICATION SUITE (PHASES 1 - 4) ===\n");
+    printf("=== ZERO ENGINE: COMPLETE VERIFICATION SUITE (PHASES 1 - 6) ===\n");
     test_memory_arena();
     test_math_vectors_matrices();
     test_math_dual_quaternions();
@@ -463,6 +565,10 @@ int main(int argc, char **argv) {
     test_physics_ccd_raycast();
     test_physics_xpbd_simulation();
     test_vehicle_advanced_aerodynamics();
+    test_csm_cascades_and_math();
+    test_sky_atmosphere_scattering();
+    test_scene_graph_hierarchy();
+    test_inspect_headless_perception();
 
     if (run_windowed) {
         printf("Running windowed platform verification...\n");

@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -Iinclude -D_POSIX_C_SOURCE=199309L
 LDFLAGS ?= -lX11 -l:libGL.so.1 -lm -lpthread
 
-SRC = src/zero_memory.c src/zero_platform.c src/zero_gl_loader.c src/zero_shader.c src/zero_mesh.c src/zero_camera.c src/zero_image.c src/zero_obj.c src/zero_zmesh.c src/zero_vehicle.c src/zero_physics.c
+SRC = src/zero_memory.c src/zero_platform.c src/zero_gl_loader.c src/zero_shader.c src/zero_mesh.c src/zero_camera.c src/zero_image.c src/zero_obj.c src/zero_zmesh.c src/zero_vehicle.c src/zero_physics.c src/zero_csm.c src/zero_sky.c src/zero_scene.c src/zero_inspect.c
 OBJ = $(SRC:src/%.c=build/%.o)
 TEST_SRC = tests/test_zero_engine.c
 TEST_BIN = build/test_zero_engine

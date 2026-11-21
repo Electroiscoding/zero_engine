@@ -58,6 +58,67 @@ typedef ptrdiff_t GLintptr;
 #define GL_STATIC_DRAW 0x88E4
 #define GL_DYNAMIC_DRAW 0x88E8
 
+/* Framebuffer Objects (FBO) */
+#define GL_FRAMEBUFFER                  0x8D40
+#define GL_READ_FRAMEBUFFER             0x8CA8
+#define GL_DRAW_FRAMEBUFFER             0x8CA9
+#define GL_DEPTH_ATTACHMENT             0x8D00
+#define GL_STENCIL_ATTACHMENT           0x8D20
+#define GL_DEPTH_STENCIL_ATTACHMENT     0x821A
+#define GL_COLOR_ATTACHMENT0            0x8CE0
+#define GL_COLOR_ATTACHMENT1            0x8CE1
+#define GL_COLOR_ATTACHMENT2            0x8CE2
+#define GL_COLOR_ATTACHMENT3            0x8CE3
+#define GL_FRAMEBUFFER_COMPLETE         0x8CD5
+#define GL_FRAMEBUFFER_UNDEFINED        0x8219
+#define GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT 0x8CD6
+#define GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT 0x8CD7
+#define GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER 0x8CDB
+#define GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER 0x8CDC
+#define GL_FRAMEBUFFER_UNSUPPORTED      0x8CDD
+#define GL_NONE                         0
+
+/* Depth Formats */
+#define GL_DEPTH_COMPONENT              0x1902
+#define GL_DEPTH_COMPONENT16            0x81A5
+#define GL_DEPTH_COMPONENT24            0x81A6
+#define GL_DEPTH_COMPONENT32            0x81A7
+#define GL_DEPTH_COMPONENT32F           0x8CAC
+
+/* Texture Parameters for Shadow Comparison & Border Clamping */
+#define GL_TEXTURE_COMPARE_MODE         0x884C
+#define GL_COMPARE_REF_TO_TEXTURE       0x884E
+#define GL_TEXTURE_COMPARE_FUNC         0x884D
+#define GL_LEQUAL                       0x0203
+#define GL_GEQUAL                       0x0206
+#define GL_LESS                         0x0201
+#define GL_GREATER                      0x0204
+#define GL_EQUAL                        0x0202
+#define GL_NOTEQUAL                     0x0205
+#define GL_ALWAYS                       0x0207
+#define GL_NEVER                        0x0200
+#define GL_CLAMP_TO_BORDER              0x812D
+#define GL_TEXTURE_BORDER_COLOR         0x1004
+
+/* Active Texture Unit Enums */
+#define GL_TEXTURE0                     0x84C0
+#define GL_TEXTURE1                     0x84C1
+#define GL_TEXTURE2                     0x84C2
+#define GL_TEXTURE3                     0x84C3
+#define GL_TEXTURE4                     0x84C4
+#define GL_TEXTURE5                     0x84C5
+#define GL_TEXTURE6                     0x84C6
+#define GL_TEXTURE7                     0x84C7
+
+/* Rasterization and Culling */
+#define GL_CULL_FACE                    0x0B44
+#define GL_FRONT                        0x0404
+#define GL_BACK                         0x0405
+#define GL_FRONT_AND_BACK               0x0408
+#define GL_CW                           0x0900
+#define GL_CCW                          0x0901
+#define GL_POLYGON_OFFSET_FILL          0x8037
+
 typedef struct __GLXcontextRec *GLXContext;
 typedef XID GLXPixmap;
 typedef XID GLXDrawable;
@@ -120,6 +181,14 @@ extern void glGenTextures(GLsizei n, GLuint *textures);
 extern void glBindTexture(GLenum target, GLuint texture);
 extern void glDeleteTextures(GLsizei n, const GLuint *textures);
 extern void glTexParameteri(GLenum target, GLenum pname, GLint param);
+extern void glTexParameterfv(GLenum target, GLenum pname, const GLfloat *params);
 extern void glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels);
+
+extern void glDepthMask(GLboolean flag);
+extern void glDepthFunc(GLenum func);
+extern void glCullFace(GLenum mode);
+extern void glPolygonOffset(GLfloat factor, GLfloat units);
+extern void glDrawBuffer(GLenum buf);
+extern void glReadBuffer(GLenum src);
 
 #endif

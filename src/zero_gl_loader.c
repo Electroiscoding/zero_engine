@@ -40,6 +40,26 @@ bool zero_gl_load_core_profile(void) {
     zgl.glUniform3f = (PFNGLUNIFORM3FPROC)get_proc("glUniform3f");
     zgl.glUniform1f = (PFNGLUNIFORM1FPROC)get_proc("glUniform1f");
 
+    /* Framebuffers */
+    zgl.glGenFramebuffers = (PFNGLGENFRAMEBUFFERSPROC)get_proc("glGenFramebuffers");
+    zgl.glBindFramebuffer = (PFNGLBINDFRAMEBUFFERPROC)get_proc("glBindFramebuffer");
+    zgl.glFramebufferTexture2D = (PFNGLFRAMEBUFFERTEXTURE2DPROC)get_proc("glFramebufferTexture2D");
+    zgl.glCheckFramebufferStatus = (PFNGLCHECKFRAMEBUFFERSTATUSPROC)get_proc("glCheckFramebufferStatus");
+    zgl.glDeleteFramebuffers = (PFNGLDELETEFRAMEBUFFERSPROC)get_proc("glDeleteFramebuffers");
+    zgl.glDrawBuffers = (PFNGLDRAWBUFFERSPROC)get_proc("glDrawBuffers");
+    zgl.glDrawBuffer = (PFNGLDRAWBUFFERPROC)get_proc("glDrawBuffer");
+    zgl.glReadBuffer = (PFNGLREADBUFFERPROC)get_proc("glReadBuffer");
+
+    /* Texture units & parameters */
+    zgl.glActiveTexture = (PFNGLACTIVETEXTUREPROC)get_proc("glActiveTexture");
+    zgl.glTexParameterfv = (PFNGLTEXPARAMETERFVPROC)get_proc("glTexParameterfv");
+
+    /* Uniforms */
+    zgl.glUniform1i = (PFNGLUNIFORM1IPROC)get_proc("glUniform1i");
+    zgl.glUniform1iv = (PFNGLUNIFORM1IVPROC)get_proc("glUniform1iv");
+    zgl.glUniform1fv = (PFNGLUNIFORM1FVPROC)get_proc("glUniform1fv");
+    zgl.glUniform3fv = (PFNGLUNIFORM3FVPROC)get_proc("glUniform3fv");
+
     if (!zgl.glCreateShader || !zgl.glCreateProgram || !zgl.glGenVertexArrays || !zgl.glGenBuffers) {
         return false;
     }
