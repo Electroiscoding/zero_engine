@@ -1,17 +1,15 @@
-# Project: Zero Engine (Phases 2 through 6)
+# Project: Zero Drift: Apex (Standalone 3D Racing Game)
 
 ## Architecture
-Zero Engine is a high-performance, AI-native, pure C11/C++20 game engine built natively for Linux x86_64 with zero external dependencies (no GLFW, SDL, GLAD, GLEW, GLM, Assimp, STB, Bullet, PhysX). It uses native Linux `libX11`, `libGL.so.1`, and standard system headers (`libc`, `libm`, `sys/mman.h`).
+"Zero Drift: Apex" is a high-performance, high-fidelity standalone 3D Racing Game built strictly and exclusively on top of the freestanding Zero Engine (`libzero_engine.a`) with zero external dependencies beyond `-lX11 -l:libGL.so.1 -lm -lpthread`.
 
-### Subsystem Topology
-- **Platform & Runtime Core**: Pure X11, GLX 1.4 context negotiation, dynamic GL function dispatch (`zero_gl_loader`), 64-byte aligned linear and scratch arenas (`zero_memory`), monotonic timing.
-- **Hyper-Math Core**: Vectorized SSE/AVX `Vec2`, `Vec3`, `Vec4`, `Mat4`, `Quat`, `DualQuat` in `zero_math.h`.
-- **View & Mesh System (Phase 2)**: Modular GLSL shaders, VAO/VBO/EBO mesh buffers, procedural geometry (Cube, Plane, UV Sphere), 3D FPS camera with raycasting.
-- **Asset Pipeline Core (Phase 3)**: Fast zero-dependency Wavefront `.obj` parser, uncompressed 24/32-bit `.tga` and `.bmp` loaders, 64-byte aligned binary `.zmesh` cache with Linux `mmap` zero-copy streaming.
-- **Physics Simulation Core (Phase 4)**: Self-balancing Dynamic AABB Tree broadphase with SAH, GJK+EPA CCD narrowphase for convex shapes (Sphere, Box, Capsule), dual XPBD/Sequential Impulse solver with warm-starting, cache-coherent Structure-of-Arrays (SoA) layout.
-- **Low-Spec High-Fidelity Render Pipeline (Phase 5)**: Analytical Preetham/Bruneton atmospheric sky and sun scattering in GLSL (0.02ms GPU target), Cook-Torrance microfacet PBR (GGX, Schlick, Smith), Cascaded Shadow Mapping (CSM, 3 splits) with 4-tap PCF.
-- **AI Agent Semantic Perception Interface (Phase 6)**: Headless simulation runner with deterministic tick loop (dt = 1/60s), structured JSON/text spatial telemetry (`engine_inspect_scene()`), automated gameplay assertion harness.
-- **Interactive Binary**: `demo_3d_viewport` natively running on Linux X11/GLX with seamless headless fallback.
+The game features:
+- **Full Game UI & Flow (ZeroUI)**: Main menu, car selection, track selection, settings, in-game racing HUD with analog/digital gauges, pause menu, and podium leaderboard.
+- **Advanced XPBD Vehicle Physics & Automatic Transmission**: Raycast suspension with XPBD compliance and anti-roll bars, Brush tire friction model with Kamm's circle and power-slide drift mechanics, aerodynamics (splitter, wing, ground-effect diffuser, active airbrake), and 6-speed automatic transmission with PRND/reverse.
+- **Autonomous AI Opponent Racers**: 4-car racing grid (Player + 3 AI rivals) navigating the 120-waypoint spline track using pure pursuit steering, anticipatory corner braking, forward-cone obstacle detection, lateral avoidance, and OBB inter-car collision resolution.
+- **High-Fidelity Multi-Camera & Track Environment**: 4 dynamic camera views (Chase Cam with 2nd-order spring-damper lag and speed-sensitive FOV, Hood Cam, Cockpit View, Trackside TV Broadcast Cam / Bumper Cam); procedural spline track extrusion with asphalt, rumble curbs, barriers, and gantry; lit by Cascaded Shadow Maps (3 splits, 4-tap PCF) and Bruneton diurnal atmospheric sky.
+- **Native Freestanding Audio Synthesizer**: Tri-backend architecture (dynamic ALSA `dlopen("libasound.so.2")` -> `aplay` raw pipe -> in-memory software ring buffer) with procedural sound synthesis: multi-harmonic RPM pitch-shifted V8 engine roar, lateral tire slip squeal, aerodynamic wind rush, and UI countdown chimes.
+- **Standalone Game Target & Deterministic Verification**: Compiles via `make race_game` under `-std=c11 -O2 -Wall -Wextra -Werror`, passes 100% of master engine tests (`make test`), and verifies 100% of headless multi-car simulation tests.
 
 ---
 
@@ -19,52 +17,28 @@ Zero Engine is a high-performance, AI-native, pure C11/C++20 game engine built n
 ```
 zero_engine/
 ├── include/
-│   ├── zero_core.h          # Macros, alignment, cache-line constants
-│   ├── zero_memory.h        # Linear & scratch arena allocators
-│   ├── zero_platform.h      # X11 windowing, event pump, headless detection
-│   ├── zero_gl_defs.h       # OpenGL 3.3 Core & GLX 1.4 types, enums, constants
-│   ├── zero_gl_loader.h     # Dynamic OpenGL function dispatch table
-│   ├── zero_math.h          # Vector, matrix, quaternion, dual quaternion SIMD math
-│   ├── zero_shader.h        # Shader compile, link diagnostics, uniform setters
-│   ├── zero_mesh.h          # Vertex format, mesh buffers, procedural geometry
-│   ├── zero_camera.h        # 3D FPS camera, projection, screen-to-ray
-│   ├── zero_obj.h           # (Phase 3) Wavefront OBJ parser
-│   ├── zero_image.h         # (Phase 3) 24/32-bit TGA and BMP image loaders
-│   ├── zero_zmesh.h         # (Phase 3) Binary mesh container & mmap streaming
-│   ├── zero_aabb.h          # (Phase 4) Dynamic AABB Tree with SAH
-│   ├── zero_collision.h     # (Phase 4) GJK/EPA & CCD narrowphase
-│   ├── zero_physics.h       # (Phase 4) Dual XPBD / Sequential Impulse solver
-│   ├── zero_rigidbody_soa.h # (Phase 4) Structure-of-Arrays physics data layout
-│   ├── zero_sky.h           # (Phase 5) Analytical atmospheric sky renderer
-│   ├── zero_csm.h           # (Phase 5) Cascaded Shadow Maps with 3 splits & 4-tap PCF
-│   ├── zero_render_pbr.h    # (Phase 5) Cook-Torrance Microfacet PBR renderer
-│   ├── zero_perception.h    # (Phase 6) Spatial telemetry & JSON engine_inspect_scene()
-│   └── zero_headless.h      # (Phase 6) Deterministic runner & gameplay assertions
+│   ├── zero_audio.h           # (M1) Freestanding procedural audio synthesizer & tri-backend
+│   ├── zero_vehicle_physics.h # (M2) Advanced XPBD suspension, Brush tire model, 6-speed auto transmission
+│   ├── zero_ai_racers.h       # (M3) Multi-car grid, pure pursuit AI steering, avoidance, OBB collision
+│   ├── zero_race_camera.h     # (M4) 4-mode camera controller with spring-damper lag & FOV dilation
+│   ├── zero_track_mesh.h      # (M4) Procedural spline track geometry (road, curbs, barriers, gantry)
+│   ├── zero_race_ui.h         # (M5) ZeroUI game state machine, menus, analog/digital HUD, minimap
+│   └── (existing engine headers: zero_core.h, zero_memory.h, zero_platform.h, zero_gl_loader.h,
+│        zero_math.h, zero_mesh.h, zero_shader.h, zero_camera.h, zero_csm.h, zero_sky.h,
+│        zero_ui.h, zero_vehicle.h, zero_track_spline.h, zero_physics.h)
 ├── src/
-│   ├── zero_memory.c
-│   ├── zero_platform.c
-│   ├── zero_gl_loader.c
-│   ├── zero_shader.c
-│   ├── zero_mesh.c
-│   ├── zero_camera.c
-│   ├── zero_obj.c           # (Phase 3)
-│   ├── zero_image.c         # (Phase 3)
-│   ├── zero_zmesh.c         # (Phase 3)
-│   ├── zero_aabb.c          # (Phase 4)
-│   ├── zero_collision.c     # (Phase 4)
-│   ├── zero_physics.c       # (Phase 4)
-│   ├── zero_rigidbody_soa.c # (Phase 4)
-│   ├── zero_sky.c           # (Phase 5)
-│   ├── zero_csm.c           # (Phase 5)
-│   ├── zero_render_pbr.c    # (Phase 5)
-│   ├── zero_perception.c    # (Phase 6)
-│   └── zero_headless.c      # (Phase 6)
+│   ├── zero_audio.c           # (M1) Procedural sound synthesis (engine, tire, wind, UI) & PCM streaming
+│   ├── zero_vehicle_physics.c # (M2) XPBD suspension, anti-roll, tire friction, powertrain simulation
+│   ├── zero_ai_racers.c       # (M3) AI lookahead, corner braking, overtaking, OBB collision solver
+│   ├── zero_race_camera.c     # (M4) Camera mode updates, spring-damper math, FOV dilation, transitions
+│   ├── zero_track_mesh.c      # (M4) Spline extrusion, curb striping, barrier generation
+│   ├── zero_race_ui.c         # (M5) Menu flow rendering, tachometer gauge, speedometer, podium
+│   ├── zero_race_game.c       # (M6) Standalone executable entry point, game loop, rendering pipeline
+│   └── (existing engine sources)
 ├── tests/
-│   ├── test_zero_engine.c   # Unit test verification suite
-│   └── test_e2e_engine.c    # Comprehensive 4-Tier E2E acceptance test suite
-├── examples/
-│   └── demo_3d_viewport.c   # Interactive 3D viewport demo binary
-└── Makefile                 # GCC build orchestration with -O2 -Wall -Wextra -Werror
+│   ├── test_zero_engine.c     # Master engine verification suite (430 tests passing)
+│   └── test_race_integration.c # (E2E) Headless multi-car race, telemetry, audio, camera verification
+└── Makefile                   # Build orchestration with 'race_game' target and -Werror
 ```
 
 ---
@@ -72,81 +46,137 @@ zero_engine/
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Makefile Build & Phase 2 Integration | Add all sources to Makefile, export GL_UNSIGNED_INT, verify 339 tests | M1 | Survey 1 |
-| 2 | Procedural Geometry & Buffers | Cube (24v/36i), Plane (4v/6i), UV Sphere (parametric), VAO/VBO/EBO | M1 | Request R1 |
-| 3 | 3D FPS Camera & Raycasting | Pitch/yaw clamping, WASD translation, screen-to-world raycasting | M1 | Request R1 |
-| 4 | GLSL Shader Diagnostics & Uniforms | Compile/link error logs, mat4/vec3/float uniform setters | M1 | Request R1 |
-| 5 | Wavefront OBJ Fast Tokenizer | Zero-malloc per-token ASCII parsing of v, vt, vn | M2 | Request R2 |
-| 6 | OBJ Multi-Format Face Parser | Parses f v, f v/vt, f v/vt/vn, f v//vn with negative index resolution | M2 | Survey 2 |
-| 7 | OBJ Polygon Triangulation | Triangle fan triangulation of arbitrary N-gons | M2 | Survey 2 |
-| 8 | OBJ Scratch Vertex Deduplication | Open-addressed hash map in scratch arena mapping (v,vt,vn) to unique vertices | M2 | Survey 2 |
-| 9 | Uncompressed 24/32-bit TGA Loader | TrueColor TGA loading, colormap skip, BGR swizzle, orientation bit 5 | M2 | Request R2 |
-| 10 | Uncompressed 24/32-bit BMP Loader | 14-byte File + 40-byte DIB header, 4-byte row padding, BGR swizzle | M2 | Request R2 |
-| 11 | .zmesh 64-byte Aligned Binary Container | Magic 0x48534D5A, vertex/index counts, offsets, AABB, bounding sphere | M2 | Request R2 |
-| 12 | Linux mmap Zero-Copy Streaming | Direct mmap(MAP_SHARED|MAP_POPULATE) for instant VRAM streaming | M2 | Request R2 |
-| 13 | Dynamic AABB Tree Node Hierarchy | Binary bounding volume hierarchy with node pool and free list | M3 | Request R3 |
-| 14 | Fat AABB Predictive Velocity Expansion | AABB expanded by margin + v*dt to eliminate unnecessary reinsertions | M3 | Survey 2 |
-| 15 | Surface Area Heuristic (SAH) Insertion | Greedy surface area cost minimization for optimal subtree insertion | M3 | Request R3 |
-| 16 | Dynamic AABB Tree AVL Self-Balancing | Rebalances subtree rotations when height difference > 1 | M3 | Survey 2 |
-| 17 | Branch-and-Bound Tree Raycast | Slab-intersection ray traversal against tree nodes | M3 | Survey 2 |
-| 18 | Convex Support Functions | Extreme point evaluations for Sphere, Box (OBB), and Capsule | M3 | Survey 2 |
-| 19 | GJK Simplex Solver | 1D to 4D simplex Voronoi region tracking for convex shapes | M3 | Request R3 |
-| 20 | Expanding Polytope Algorithm (EPA) | Polytope expansion for contact normal, penetration depth, contact points | M3 | Request R3 |
-| 21 | Continuous Collision Detection (CCD) | Swept-volume conservative advancement eliminating tunneling | M3 | Request R3 |
-| 22 | XPBD Compliant Position Projection | Decoupled compliance parameter alpha = 1 / (k*dt^2) for soft constraints | M3 | Request R3 |
-| 23 | Persistent Contact Manifold | Tracks up to 4 contact points per body pair with warm-starting | M3 | Request R3 |
-| 24 | Sequential Impulse Solver | Warm-started normal and Coulomb friction velocity constraint solver | M3 | Request R3 |
-| 25 | Structure-of-Arrays (SoA) Layout | 64-byte aligned contiguous float arrays for SIMD integration | M3 | Request R3 |
-| 26 | Analytical Atmospheric Sky Model | Preetham/Bruneton Rayleigh lambda^-4 & Mie scattering in pure GLSL (0.02ms) | M4 | Request R4 |
-| 27 | Analytical Sun Disc & Solar Corona | Finite angular diameter (0.533 deg) and forward Henyey-Greenstein aureole | M4 | Survey 3 |
-| 28 | Horizon Ground Haze Blend | Smooth optical scattering transition across ground horizon | M4 | Survey 3 |
-| 29 | GGX Normal Distribution D(h) | Trowbridge-Reitz microfacet orientation distribution | M4 | Request R4 |
-| 30 | Schlick Fresnel F(v,h) | Angle-dependent reflectance with metallic/roughness parameterization | M4 | Request R4 |
-| 31 | Smith Joint Masking-Shadowing G | Schlick-GGX height-correlated shadowing canceling singularity | M4 | Request R4 |
-| 32 | CSM Frustum 3-Split Log-Uniform Blend | Practical 3-split logarithmic-uniform partition (near, mid, far) | M4 | Request R4 |
-| 33 | CSM Rotation-Invariant Bounding Sphere | Minimal enclosing sphere for cascade slices eliminating rotation wobbly | M4 | Survey 3 |
-| 34 | CSM Light Ortho Texel Snapping | Snapping light-space bounds to discrete integer texel steps | M4 | Survey 3 |
-| 35 | CSM Depth Map FBO Generation | 3-target depth FBO setup without color buffers | M4 | Survey 3 |
-| 36 | 4-Tap PCF Fragment Shadow Filtering | Slope-scaled depth bias and 4-tap diagonal grid percentage-closer filtering | M4 | Request R4 |
-| 37 | Headless Simulation Runner | Deterministic tick runner (dt = 1/60s) with XorShift64 PRNG | M5 | Request R5 |
-| 38 | Spatial Telemetry engine_inspect_scene() | Structured JSON/text serialization of tick, camera, visible entities, contacts | M5 | Request R5 |
-| 39 | Camera Frustum Culling | Entity AABB testing against 6 view-projection frustum planes | M5 | Survey 3 |
-| 40 | Screen-Space Coordinate Projection | 3D world to [u, v] screen space and NDC depth projection | M5 | Survey 3 |
-| 41 | Automated Gameplay Assertion Harness | Deterministic assertion macros with diagnostic telemetry dumping on failure | M5 | Request R5 |
-| 42 | Interactive Demo demo_3d_viewport | Native Linux X11/GLX runtime with PBR, CSM, sky, WASD camera, headless fallback | M6 | Request R1-R5 |
-| 43 | 4-Tier E2E Test Suite | Comprehensive opaque-box test suite verifying 100% of features | E2E | Architecture §1 |
+| 1 | Freestanding Tri-Backend Audio Output | Dynamic ALSA `dlopen` -> `aplay` pipe -> software ring buffer with zero external link flags | M1 | Survey 3 / R5 |
+| 2 | Procedural V8 Engine Sound Model | Multi-harmonic saw/square wave pitch-scaled by RPM + throttle-modulated resonant lowpass | M1 | Survey 3 / R5 |
+| 3 | Procedural Tire Slip Squeal Model | 2-pole resonant bandpass noise modulated by lateral slip angle and stick-slip tremolo | M1 | Survey 3 / R5 |
+| 4 | Procedural Aerodynamic Wind Rush | Speed-scaled lowpass noise with quadratic acoustic power scaling | M1 | Survey 3 / R5 |
+| 5 | Procedural UI Beeps & Countdown Chimes | Harmonic sine bursts for menu navigation and 3-2-1-GO race countdown | M1 | Survey 3 / R5 |
+| 6 | XPBD Compliant Suspension & Anti-Roll Bars | Unilateral compliant distance constraints with front/rear sway bar roll coupling | M2 | Survey 2 / R2 |
+| 7 | Brush Tire Friction & Drift Model | Fiala brush tire friction model with Kamm's circle and handbrake rear-grip attenuation | M2 | Survey 2 / R2 |
+| 8 | Multi-Element Aerodynamics | Dynamic pressure scaling, front splitter, rear wing downforce, ground diffuser, active airbrake | M2 | Survey 2 / R2 |
+| 9 | 6-Speed Automatic Transmission | Polynomial engine torque curve (480 Nm @ 4500 RPM), kickdown, shift lockout, PRND reverse | M2 | Survey 2 / R2 |
+| 10 | Spline Parameterization & Curvature | Arc length, tangent, normal, curvature, and cornering speed limits along `g_track_spline[120][2]` | M3 | Survey 2 / R3 |
+| 11 | Pure Pursuit AI Steering & Corner Braking | Lookahead pure pursuit steering with anticipatory corner braking | M3 | Survey 2 / R3 |
+| 12 | AI Lateral Avoidance & Overtaking | Forward-cone detection of opponent cars and lateral offset evasive maneuvers | M3 | Survey 2 / R3 |
+| 13 | 4-Car Grid & OBB Collision Solver | Staggered grid (Player + 3 AI rivals) with pairwise OBB collision impulse resolution | M3 | Survey 2 / R3 |
+| 14 | 4-Mode Dynamic Camera System | Chase Cam (2nd-order spring-damper lag, speed FOV), Hood Cam, Cockpit Cam, Bumper/TV Cam | M4 | Survey 3 / R4 |
+| 15 | Procedural Spline Track Mesh Extrusion | Asphalt road with lane UVs, alternating red/white rumble curbs, Armco barriers, start gantry | M4 | Survey 3 / R4 |
+| 16 | CSM & Diurnal Sky Shading Integration | 3-cascade shadow map rendering with 4-tap PCF and Bruneton sky lighting | M4 | Survey 3 / R4 |
+| 17 | ZeroUI Game State Machine & Menus | Main Menu, Car Select, Track Select, Settings, Pause, and Leaderboard Podium | M5 | Survey 3 / R1 |
+| 18 | In-Game Racing HUD Widgets | Analog/arc tachometer with redline flash, digital speedometer, gear, lap/pos, split delta, minimap | M5 | Survey 3 / R1 |
+| 19 | Standalone Game Loop & Binary Target | `build/race_game` executable compiled via `make race_game` under `-Werror` | M6 | Survey 1 / Acceptance |
+| 20 | Headless Deterministic Race Simulation | Deterministic fixed-step (`dt = 1/60s`) loop for automated testing | M6 | Survey 2 / R6 |
+| 21 | Comprehensive 4-Tier E2E Test Suite | Autonomous multi-car integration test in `tests/test_race_integration.c` | E2E | Survey 3 / R6 |
 
 ---
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Build Integration & Phase 2 Finalization | Update Makefile, fix GL_UNSIGNED_INT, verify 339 tests | none | IN_PROGRESS |
-| M2 | Phase 3: Zero-Dependency Asset Pipeline | OBJ parser, 24/32-bit TGA/BMP, .zmesh mmap, GL texture loader | M1 | PLANNED |
-| M3 | Phase 4: Hyper-Grade Physics Subsystem | Dynamic AABB Tree SAH, GJK/EPA CCD, Dual XPBD/SI solver, SoA | M1 | PLANNED |
-| M4 | Phase 5: Low-Spec High-Fidelity Rendering Pipeline | GL FBO loader, Preetham sky, Cook-Torrance PBR, CSM 4-tap PCF | M1, M2 | PLANNED |
-| M5 | Phase 6: AI Agent Semantic Perception Interface | Headless simulation runner, engine_inspect_scene() JSON, assertion harness | M1, M3 | PLANNED |
-| M6 | Final Integration & Interactive Demo | demo_3d_viewport compilation & runtime, 100% E2E test pass | M2, M3, M4, M5 | PLANNED |
+| M1 | Native Freestanding Audio Synthesizer | `include/zero_audio.h`, `src/zero_audio.c` (tri-backend, engine roar, tire squeal, wind, chimes) | none | IN_PROGRESS |
+| M2 | Advanced Vehicle Physics & Transmission | `include/zero_vehicle_physics.h`, `src/zero_vehicle_physics.c` (XPBD suspension, Brush tires, 6-speed auto) | none | IN_PROGRESS |
+| M3 | Autonomous AI Opponent Racers | `include/zero_ai_racers.h`, `src/zero_ai_racers.c` (4-car grid, pure pursuit, avoidance, OBB collision) | M2 contract | IN_PROGRESS |
+| M4 | Multi-Camera System & Track Visuals | `include/zero_race_camera.h`, `src/zero_race_camera.c`, `include/zero_track_mesh.h`, `src/zero_track_mesh.c` | none | IN_PROGRESS |
+| M5 | Complete Game Flow & Menus (ZeroUI) | `include/zero_race_ui.h`, `src/zero_race_ui.c` (menus, HUD gauges, minimap, podium) | none | IN_PROGRESS |
+| M6 | Final Game Integration & Standalone Binary | `src/zero_race_game.c`, `Makefile` (`make race_game`, main loop, 100% test pass) | M1, M2, M3, M4, M5 | PLANNED |
+| E2E | E2E Testing Track | `tests/test_race_integration.c`, `TEST_INFRA.md`, `TEST_READY.md` (4-tier verification) | none | IN_PROGRESS |
 
 ---
 
 ## Interface Contracts
 
-### M1 ↔ M2 (Asset Pipeline)
-- `ZeroArena` & `ZeroScratch` from `include/zero_memory.h` are used for all allocations. Zero `malloc`/`free` permitted.
-- `ZeroMeshData` (`include/zero_mesh.h`) is the universal mesh representation populated by `zero_obj_load_file` and serialized by `zero_zmesh_save_file`.
-- `ZeroGL` (`include/zero_gl_loader.h`) is extended with texture dispatch: `glGenTextures`, `glBindTexture`, `glTexImage2D`, `glTexParameteri`, `glActiveTexture`, `glDeleteTextures`, `glUniform1i`.
+### M1 (Audio) ↔ M6 (Game Integration)
+```c
+typedef struct ZeroAudioParams {
+    float engine_rpm;
+    float throttle;
+    float tire_slip_ratio;
+    float vehicle_speed_kmh;
+    bool trigger_shift_pop;
+    bool trigger_menu_beep;
+    bool trigger_countdown_red;
+    bool trigger_countdown_green;
+} ZeroAudioParams;
 
-### M1 ↔ M3 (Physics Subsystem)
-- `Vec3`, `Quat`, `Mat4` from `include/zero_math.h` are used across all bounding boxes, transforms, and impulses.
-- `ZeroContactManifold` (`include/zero_collision.h`) provides contact normal, point_a, point_b, penetration depth.
-- `ZeroRigidBodySoA` (`include/zero_rigidbody_soa.h`) stores contiguous aligned arrays for positions, velocities, forces, inertias, AABBs.
+bool zero_audio_init(ZeroAudioEngine *audio, bool force_software);
+void zero_audio_shutdown(ZeroAudioEngine *audio);
+void zero_audio_update_params(ZeroAudioEngine *audio, const ZeroAudioParams *params);
+void zero_audio_synthesize_buffer(ZeroAudioEngine *audio, int16_t *out_samples, uint32_t sample_count);
+```
 
-### M2 / M3 ↔ M4 (Rendering Pipeline)
-- `ZeroCSM` (`include/zero_csm.h`) generates shadow maps sampled by `ZeroPBRShader` (`include/zero_render_pbr.h`).
-- `ZeroSkyRenderer` (`include/zero_sky.h`) renders atmospheric background sky in a dedicated pass before or after PBR geometry.
-- `ZeroGL` is extended with FBO dispatch: `glGenFramebuffers`, `glBindFramebuffer`, `glFramebufferTexture2D`, `glCheckFramebufferStatus`, `glDeleteFramebuffers`, `glDrawBuffers`.
+### M2 (Vehicle Physics) ↔ M3 (AI Racers) & M6 (Game)
+```c
+typedef struct ZeroVehicleEnhanced {
+    Vec3 position;
+    Vec3 velocity;
+    Vec3 angular_velocity;
+    Quat orientation;
+    Mat4 transform;
+    float mass;
+    Vec3 inertia;
+    Vec3 inv_inertia;
+    ZeroWheel wheels[4];
+    ZeroTransmission transmission;
+    float engine_rpm;
+    float drive_wheel_torque;
+    float throttle_input;
+    float brake_input;
+    float steer_input;
+    bool handbrake;
+    float speed_kmh;
+    float drift_angle;
+    bool is_drifting;
+    int lap_count;
+    float current_lap_time;
+    float best_lap_time;
+    float track_progress_s;
+    int race_position;
+    float aero_airbrake_active;
+} ZeroVehicleEnhanced;
 
-### M3 ↔ M5 (Perception Interface)
-- `engine_inspect_scene()` queries `ZeroDynamicAABBTree` and active `ZeroContactManifold` list from physics core.
-- `zero_headless_step()` drives rigid body integration and collision detection deterministically at 60 Hz.
+ZeroVehicleEnhanced zero_vehicle_enhanced_create(Vec3 spawn_pos, Quat spawn_rot);
+void zero_vehicle_enhanced_update(ZeroVehicleEnhanced *car, float dt, ZeroGroundHeightFn ground_fn);
+```
+
+### M3 (AI Racers) ↔ M6 (Game)
+```c
+#define ZERO_RACE_CAR_COUNT 4
+
+typedef struct ZeroRaceGame {
+    ZeroVehicleEnhanced cars[ZERO_RACE_CAR_COUNT]; // Car 0 = Player, Cars 1-3 = AI
+    ZeroAIController ai_controllers[3];
+    uint64_t tick;
+    float race_time;
+    bool race_started;
+    bool race_finished;
+    int total_laps;
+    uint32_t winning_car_index;
+} ZeroRaceGame;
+
+ZeroRaceGame zero_race_game_create(void);
+void zero_race_game_step(ZeroRaceGame *game, float dt);
+void zero_race_game_resolve_car_collisions(ZeroRaceGame *game);
+void zero_race_game_update_rankings(ZeroRaceGame *game);
+```
+
+### M4 (Camera & Track) ↔ M6 (Game)
+```c
+ZeroRaceCamera zero_race_camera_create(float aspect);
+void zero_race_camera_cycle_mode(ZeroRaceCamera *rcam);
+void zero_race_camera_update(ZeroRaceCamera *rcam, Vec3 car_position, Quat car_orientation,
+                             Vec3 car_velocity, float car_rpm, float steer_input, float dt);
+Mat4 zero_race_camera_get_view(const ZeroRaceCamera *rcam);
+Mat4 zero_race_camera_get_projection(const ZeroRaceCamera *rcam);
+
+ZeroTrackMeshes zero_track_meshes_generate(ZeroArena *arena);
+void zero_track_meshes_draw(const ZeroTrackMeshes *meshes, ZeroShader *pbr_shader);
+```
+
+### M5 (UI) ↔ M6 (Game)
+```c
+bool zero_game_ui_init(ZeroGameUI *gui);
+void zero_game_ui_shutdown(ZeroGameUI *gui);
+void zero_game_ui_render(ZeroGameUI *gui, const ZeroGameTelemetry *telem,
+                         float screen_w, float screen_h,
+                         float mouse_x, float mouse_y, bool mouse_down, float dt);
+```
